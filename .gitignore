@@ -1,0 +1,30 @@
+# Environment
+.env
+
+# Python
+__pycache__/
+*.pyc
+venv/
+
+# Node
+node_modules/
+dist/
+
+# Database
+postgres_data/
+
+# OS
+.DS_Store
+
+# Logs
+*.log
+.aider*
+
+# Sauvegardes Postgres locales
+backups/
+
+# Préférences locales de l'outillage (chemins absolus, machine-dépendant)
+.claude/settings.local.json
+
+# Fichier de travail personnel (suivi des bugs en cours)
+bug-report.csv

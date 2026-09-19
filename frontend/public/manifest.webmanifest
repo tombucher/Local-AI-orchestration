@@ -1,0 +1,14 @@
+{
+  "name": "Orchestrateur IA — journal d'atelier",
+  "short_name": "Atelier",
+  "description": "Pilotage de projets créatifs assisté par IA locale",
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "background_color": "#FAF7F2",
+  "theme_color": "#1C1917",
+  "lang": "fr",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icon-maskable.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

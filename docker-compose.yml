@@ -1,0 +1,181 @@
+# ════════════════════════════════════════════════════════════
+# Orchestrateur IA - Docker Compose LOCAL
+# MacBook Pro M3 Max - Environnement Développement
+# ════════════════════════════════════════════════════════════
+
+# Rotation des logs Docker (sinon ils grossissent sans limite)
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  # ──────────────────────────────────────────────────────────
+  # Open WebUI - Interface ChatGPT-like pour Ollama
+  # ──────────────────────────────────────────────────────────
+  open-webui:
+    logging: *default-logging
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    ports:
+      - "127.0.0.1:3001:8080"
+    volumes:
+      - open-webui-data:/app/backend/data
+    environment:
+      # Pointe vers Ollama natif macOS
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-change-me-in-production}
+      - ENABLE_SIGNUP=true  # Active pour créer le premier utilisateur admin
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # ──────────────────────────────────────────────────────────
+  # PostgreSQL - Base de données
+  # ──────────────────────────────────────────────────────────
+  postgres:
+    logging: *default-logging
+    image: postgres:15-alpine
+    container_name: orchestrator-postgres
+    environment:
+      POSTGRES_DB: orchestrator
+      POSTGRES_USER: orchestrator_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD manquant dans .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"  # jamais exposé sur le réseau local
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orchestrator_user -d orchestrator"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+
+  # ──────────────────────────────────────────────────────────
+  # Backend - API FastAPI
+  # ──────────────────────────────────────────────────────────
+  backend:
+    logging: *default-logging
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+    container_name: orchestrator-backend
+    command: uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    volumes:
+      - ./backend:/app
+      - /app/__pycache__
+    ports:
+      - "8000:8000"
+    # Toutes les variables de .env (clés API, modèle rapide, CORS…) sont transmises ;
+    # celles ci-dessous sont recalculées pour le réseau Docker.
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://orchestrator_user:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD manquant dans .env}@postgres:5432/orchestrator
+      - OLLAMA_HOST=http://host.docker.internal:11434
+      - ENV=development
+      - LOG_LEVEL=INFO
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY manquant dans .env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 2G
+
+  # ──────────────────────────────────────────────────────────
+  # Frontend - React/Vite
+  # ──────────────────────────────────────────────────────────
+  frontend:
+    logging: *default-logging
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: development
+    container_name: orchestrator-frontend
+    command: npm run dev -- --host 0.0.0.0
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    environment:
+      # API en chemin relatif via le proxy Vite (même origine, marche depuis le téléphone)
+      - VITE_API_URL=
+      - VITE_PROXY_TARGET=http://backend:8000
+    depends_on:
+      - backend
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+
+  # Sauvegarde quotidienne de Postgres dans ./backups (14 jours conservés)
+  db-backup:
+    image: postgres:15-alpine
+    container_name: orchestrator-db-backup
+    logging: *default-logging
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD manquant dans .env}
+    volumes:
+      - ./backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: >
+      sh -c 'while true; do
+        f=/backups/orchestrator-$$(date +%Y%m%d-%H%M).sql.gz;
+        pg_dump -h postgres -U orchestrator_user orchestrator | gzip > "$$f" && echo "backup: $$f";
+        find /backups -name "orchestrator-*.sql.gz" -mtime +14 -delete;
+        sleep 86400;
+      done'
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  open-webui-data:
+    driver: local
+
+# ════════════════════════════════════════════════════════════
+# ACCÈS INTERFACES
+# ════════════════════════════════════════════════════════════
+# 
+# 🎨 Orchestrateur (Frontend) : http://localhost:5173
+# ⚙️  API Backend              : http://localhost:8000
+# 📚 API Docs (Swagger)        : http://localhost:8000/docs
+# 🌐 Open WebUI                : http://localhost:3001
+# 🗄️  PostgreSQL               : localhost:5432
+# 🤖 Ollama (macOS natif)      : http://localhost:11434
+# 
+# ════════════════════════════════════════════════════════════
+# COMMANDES UTILES
+# ════════════════════════════════════════════════════════════
+# 
+# Démarrer    : docker-compose up -d
+# Arrêter     : docker-compose down
+# Logs        : docker-compose logs -f
+# Rebuild     : docker-compose up -d --build
+# Reset DB    : docker-compose down -v && docker-compose up -d
+#

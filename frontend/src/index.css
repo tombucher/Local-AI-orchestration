@@ -1,0 +1,73 @@
+/**
+ * Styles globaux — design system « journal d'atelier »
+ * Papier chaud, encre dense, accent vermillon.
+ * Fontes : Fraunces (titres), Archivo (UI), JetBrains Mono (code/données).
+ */
+
+@import '@fontsource-variable/fraunces';
+@import '@fontsource-variable/archivo';
+@import '@fontsource/jetbrains-mono';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Reset & Base */
+@layer base {
+  * {
+    @apply border-ink-line;
+  }
+
+  body {
+    @apply font-sans antialiased text-ink bg-paper;
+    font-feature-settings: 'ss01';
+  }
+
+  h1, h2, h3 {
+    @apply font-display;
+    font-variation-settings: 'opsz' 72, 'SOFT' 30;
+  }
+
+  ::selection {
+    background: #f5d547;
+    color: #1c1917;
+  }
+}
+
+@layer components {
+  /* Filet éditorial : trait fin sous les titres de section */
+  .rule {
+    @apply border-b border-ink-line;
+  }
+  .rule-strong {
+    @apply border-b-2 border-ink;
+  }
+
+  /* Étiquette de rubrique : petites capitales espacées */
+  .kicker {
+    @apply text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-faint;
+  }
+
+  /* Exergue : citation/résumé en serif */
+  .standfirst {
+    @apply font-display text-lg leading-relaxed text-ink-soft;
+    font-variation-settings: 'opsz' 18;
+  }
+
+  /* Chiffres tabulaires pour stats et compteurs */
+  .figures {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Custom utilities */
+@layer utilities {
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}
