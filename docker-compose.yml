@@ -32,6 +32,36 @@ services:
       - "host.docker.internal:host-gateway"
 
   # ──────────────────────────────────────────────────────────
+  # SearXNG - Métamoteur de recherche auto-hébergé
+  # Remplace DuckDuckGo (bloqué : 202 sur toutes les requêtes) et Brave
+  # (offre gratuite supprimée). Aucune clé, aucun quota, tout reste local.
+  # Config : ./searxng/settings.yml — le format JSON y est activé.
+  # ──────────────────────────────────────────────────────────
+  searxng:
+    logging: *default-logging
+    image: docker.io/searxng/searxng:latest
+    container_name: orchestrator-searxng
+    ports:
+      - "127.0.0.1:8888:8080"  # jamais exposé sur le réseau local
+    volumes:
+      - ./searxng:/etc/searxng:rw
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:8888/
+      - SEARXNG_SECRET=${SEARXNG_SECRET:?SEARXNG_SECRET manquant dans .env}
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+
+  # ──────────────────────────────────────────────────────────
   # PostgreSQL - Base de données
   # ──────────────────────────────────────────────────────────
   postgres:

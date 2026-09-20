@@ -15,6 +15,8 @@ import aiohttp
 from bs4 import BeautifulSoup
 import feedparser
 
+from app.core.config import settings as app_settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -173,12 +175,19 @@ class WebResearchModule:
     # Sources d'images libres (veille visuelle / moodboard) — sans clé API
     # ------------------------------------------------------------------
 
-    async def search_openverse(self, query: str, max_results: int = 12) -> List[Dict[str, Any]]:
-        """Openverse (openverse.org) : agrégateur d'images sous licence libre."""
+    # Openverse refuse page_size > 20 en anonyme (401 « may not exceed 20 »)
+    OPENVERSE_ANON_MAX = 20
+
+    async def search_openverse(self, query: str, max_results: int = 20) -> List[Dict[str, Any]]:
+        """Openverse (openverse.org) : agrégateur d'images sous licence libre.
+
+        C'est la seule source réellement interrogeable du lot : les APIs musée
+        retombent sur leur fonds classique dès que la requête en sort.
+        """
         try:
             async with self.session.get(
                 "https://api.openverse.org/v1/images/",
-                params={"q": query, "page_size": max_results},
+                params={"q": query, "page_size": min(max_results, self.OPENVERSE_ANON_MAX)},
                 headers={"User-Agent": "OrchestratorIA/1.0 (veille personnelle)"},
                 timeout=20,
             ) as resp:
@@ -321,11 +330,296 @@ class WebResearchModule:
             return []
 
     # Flux RSS de blogs design/art dont les entrées exposent des images
+    # Flux vérifiés le 20/09/2026 (entrées + images présentes).
+    # CreativeApplications retiré : le flux ne sert plus qu'une entrée « RSS Feed Inactive ».
     DEFAULT_DESIGN_FEEDS = [
         "https://www.thisiscolossal.com/feed/",
-        "https://www.creativeapplications.net/feed/",
         "https://www.designboom.com/feed/",
+        "https://hyperallergic.com/feed/",
+        "https://www.dezeen.com/feed/",
     ]
+
+    # Catalogue de flux vérifiés le 20/09/2026 (HTTP 200 + entrées présentes).
+    # Chaque flux est étiqueté FR/EN : on choisit les sources d'après le SUJET de la
+    # veille, pas d'après sa catégorie — un sujet « typographie » classé en « news »
+    # doit recevoir des flux design, pas des flux climat.
+    FEED_CATALOGUE: List[Dict[str, Any]] = [
+        {"url": "https://www.thisiscolossal.com/feed/", "tags": [
+            "art", "installation", "sculpture", "exposition", "craft", "artiste"]},
+        {"url": "https://hyperallergic.com/feed/", "tags": [
+            "art", "exposition", "musée", "museum", "artiste", "critique"]},
+        {"url": "https://www.dezeen.com/feed/", "tags": [
+            "design", "architecture", "graphisme", "objet", "mobilier"]},
+        {"url": "https://we-make-money-not-art.com/feed/", "tags": [
+            "art", "numérique", "digital", "interactive", "technologie", "critique",
+            "generative", "génératif", "code", "creative coding"]},
+        {"url": "https://www.creativebloq.com/feeds/all", "tags": [
+            "design", "graphisme", "typographie", "typography", "police", "font",
+            "poster", "affiche", "illustration", "identité"]},
+        {"url": "https://hnrss.org/frontpage", "tags": [
+            "tech", "code", "logiciel", "software", "développement", "open source"]},
+        {"url": "https://theconversation.com/fr/environnement/articles.atom", "tags": [
+            "écologie", "environnement", "climat", "science", "recherche"]},
+        {"url": "https://reporterre.net/spip.php?page=backend", "tags": [
+            "écologie", "environnement", "climat", "politique", "transition"]},
+        {"url": "https://www.carbonbrief.org/feed/", "tags": [
+            "climat", "climate", "carbone", "énergie", "energy"]},
+        {"url": "https://news.mongabay.com/feed/", "tags": [
+            "biodiversité", "forêt", "nature", "conservation", "environnement"]},
+        {"url": "https://e360.yale.edu/feed.xml", "tags": [
+            "environnement", "climat", "nature", "pollution"]},
+        {"url": "https://insideclimatenews.org/feed/", "tags": [
+            "climat", "climate", "énergie", "pollution"]},
+        {"url": "https://www.terrestres.org/feed/", "tags": [
+            "écologie", "politique", "transition", "critique"]},
+        {"url": "https://theecologist.org/rss", "tags": [
+            "écologie", "environnement", "nature"]},
+        {"url": "https://www.nature.com/nclimate.rss", "tags": [
+            "climat", "climate", "science", "recherche", "académique"]},
+    ]
+
+    # Complément quand trop peu de flux correspondent au sujet : larges et
+    # toujours pertinents pour un profil art numérique + design.
+    GENERALIST_TOPUP: List[str] = [
+        "https://www.thisiscolossal.com/feed/",
+        "https://hyperallergic.com/feed/",
+        "https://www.creativebloq.com/feeds/all",
+        "https://we-make-money-not-art.com/feed/",
+        "https://www.dezeen.com/feed/",
+    ]
+
+    # Repli quand aucune étiquette ne correspond au sujet
+    DEFAULT_ARTICLE_FEEDS: Dict[str, List[str]] = {
+        "tech": ["https://hnrss.org/frontpage",
+                 "https://we-make-money-not-art.com/feed/",
+                 "https://www.creativebloq.com/feeds/all"],
+        "cultural": ["https://www.thisiscolossal.com/feed/",
+                     "https://hyperallergic.com/feed/",
+                     "https://www.dezeen.com/feed/"],
+        "news": ["https://theconversation.com/fr/environnement/articles.atom",
+                 "https://reporterre.net/spip.php?page=backend",
+                 "https://www.thisiscolossal.com/feed/"],
+        "academic": ["https://www.nature.com/nclimate.rss",
+                     "https://theconversation.com/fr/environnement/articles.atom"],
+    }
+
+    @classmethod
+    def select_feeds(cls, terms: Optional[List[str]] = None, scope: str = "news",
+                     limit: int = 6,
+                     user_feeds: Optional[List[Dict[str, Any]]] = None) -> List[str]:
+        """Choisit les flux dont les étiquettes recoupent le sujet de la veille.
+
+        `user_feeds` est la bibliothèque personnelle ({url, tags}) : à correspondance
+        égale elle passe devant le catalogue intégré, puisque c'est l'utilisateur qui
+        a jugé ces sources dignes d'intérêt.
+        """
+        fallback = cls.DEFAULT_ARTICLE_FEEDS.get(scope, cls.DEFAULT_ARTICLE_FEEDS["news"])
+        haystack = ' '.join(t.casefold() for t in (terms or []))
+        if not haystack:
+            personal = [f["url"] for f in (user_feeds or [])][:limit]
+            return personal or fallback[:limit]
+
+        scored = []
+        for feed in (user_feeds or []):
+            hits = sum(1 for tag in (feed.get("tags") or []) if str(tag).casefold() in haystack)
+            if hits:
+                scored.append((hits + 0.5, feed["url"]))  # bonus : source choisie par l'utilisateur
+        for feed in cls.FEED_CATALOGUE:
+            hits = sum(1 for tag in feed["tags"] if tag in haystack)
+            if hits:
+                scored.append((hits, feed["url"]))
+        if not scored:
+            # Sujet hors catalogue : les flux perso d'abord, sinon le défaut du scope
+            personal = [f["url"] for f in (user_feeds or [])][:limit]
+            return personal or fallback[:limit]
+
+        scored.sort(key=lambda x: -x[0])
+        chosen: List[str] = []
+        for _, url in scored:           # un flux peut être à la fois perso et au catalogue
+            if url not in chosen:
+                chosen.append(url)
+            if len(chosen) >= limit:
+                break
+
+        # Les flux ne sont pas interrogeables : on ne lit que leurs dernières
+        # entrées. Trop peu de sources = récolte quasi nulle, donc on complète —
+        # avec les généralistes art/design plutôt qu'avec le défaut du scope, qui
+        # collerait des flux climat sur un sujet typographie.
+        for url in cls.GENERALIST_TOPUP:
+            if len(chosen) >= max(3, min(limit, 4)):
+                break
+            if url not in chosen:
+                chosen.append(url)
+        return chosen[:limit]
+
+    async def search_rss_articles(
+        self,
+        terms: Optional[List[str]] = None,
+        feeds: Optional[List[str]] = None,
+        scope: str = "news",
+        max_per_feed: int = 8,
+        exclude_urls: Optional[set] = None,
+        min_results: int = 8,
+        max_results: int = 14,
+        user_feeds: Optional[List[Dict[str, Any]]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Articles issus de flux RSS/Atom, filtrés par mots-clés.
+
+        Alternative gratuite et fiable à DuckDuckGo (403 fréquents) et à Brave
+        (payant). Les flux ne sont pas interrogeables : on récupère les dernières
+        entrées et on filtre localement, comme le fait l'outil OpenWebUI maison.
+        """
+        urls = [f for f in (feeds or self.select_feeds(terms, scope, user_feeds=user_feeds))
+                if str(f).startswith("http")]
+        if not urls:
+            return []
+
+        lowered = [t.casefold() for t in (terms or []) if t and len(t) > 2]
+        already = exclude_urls or set()
+
+        # Chaque flux renvoie (entrées correspondant aux termes, entrées récentes brutes)
+        spares: List[List[Dict[str, Any]]] = []
+
+        async def _one(feed_url: str) -> List[Dict[str, Any]]:
+            try:
+                raw = await self.fetch_url(feed_url, timeout=15)
+            except Exception as e:
+                logger.warning(f"Flux RSS injoignable {feed_url}: {e}")
+                return []
+            parsed = feedparser.parse(raw)
+            source_name = (parsed.feed.get("title") or feed_url)[:100]
+            found: List[Dict[str, Any]] = []
+            spare: List[Dict[str, Any]] = []
+            for entry in parsed.entries[:40]:
+                link = (entry.get("link") or "").strip()
+                if not link or link in already:
+                    continue  # Anti-doublon : déjà vu lors d'un scan précédent
+                title = BeautifulSoup(entry.get("title", ""), "html.parser").get_text(" ", strip=True)
+                summary = BeautifulSoup(
+                    entry.get("summary", "") or (entry.get("content") or [{}])[0].get("value", ""),
+                    "html.parser",
+                ).get_text(" ", strip=True)[:600]
+                item = {
+                    "title": title[:300] or "Sans titre",
+                    "url": link,
+                    "description": summary,
+                    "source_platform": source_name,
+                    "published": entry.get("published") or entry.get("updated") or "",
+                }
+                if lowered and not any(t in f"{title} {summary}".casefold() for t in lowered):
+                    if len(spare) < max_per_feed:
+                        spare.append(item)
+                    continue
+                found.append(item)
+                if len(found) >= max_per_feed:
+                    break
+            spares.append(spare)
+            return found
+
+        # Concurrence bridée : le résolveur DNS du conteneur sature au-delà
+        gate = asyncio.Semaphore(4)
+
+        async def _guarded(feed_url: str):
+            async with gate:
+                return await _one(feed_url)
+
+        batches = await asyncio.gather(*(_guarded(u) for u in urls), return_exceptions=True)
+        valid = [b for b in batches if isinstance(b, list)]
+        results = [item for batch in valid for item in batch]
+
+        # Un filtre lexical strict sur un sujet pointu ne laisse presque rien passer
+        # et affame l'analyse de pertinence LLM qui suit. En dessous du seuil, on
+        # complète avec les dernières entrées non filtrées : c'est le modèle qui tranche.
+        if lowered and len(results) < min_results:
+            seen = {r["url"] for r in results}
+            filler = [
+                item for batch in spares for item in batch
+                if item["url"] not in seen and item["url"] not in already
+            ]
+            results += filler[: max_results - len(results)]
+            logger.info(f"📰 RSS : filtre trop étroit ({len(seen)} articles), "
+                        f"complété à {len(results)} pour laisser l'IA trancher")
+
+        results = results[:max_results]
+        logger.info(f"📰 RSS ({scope}) : {len(results)} articles depuis {len(urls)} flux")
+        return results
+
+    # Are.na : /v2/search/blocks renvoie 403 pour tout le monde (blocage anti-bot).
+    # On passe donc par les *channels*, ce qui vaut mieux : ce sont des collections
+    # curatées par des humains, exactement la matière d'un moodboard.
+    ARENA_API = "https://api.are.na/v2"
+
+    async def search_arena(
+        self,
+        query: str,
+        max_channels: int = 3,
+        per_channel: int = 8,
+    ) -> List[Dict[str, Any]]:
+        """Références visuelles depuis Are.na (collections curatées art/design).
+
+        ⚠️ Contrairement aux autres sources, les images Are.na ne sont PAS libres de
+        droits : ce sont des références rassemblées par des utilisateurs depuis tout
+        le web. À utiliser comme inspiration, jamais comme visuel réutilisable.
+        """
+        token = getattr(app_settings, "ARENA_ACCESS_TOKEN", "") or ""
+        headers = {"User-Agent": "OrchestratorIA/1.0 (veille personnelle)", "Accept": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
+        try:
+            async with self.session.get(
+                f"{self.ARENA_API}/search/channels",
+                params={"q": query, "per": max_channels},
+                headers=headers,
+                timeout=20,
+            ) as resp:
+                resp.raise_for_status()
+                channels = (await resp.json()).get("channels", []) or []
+        except Exception as e:
+            logger.warning(f"Are.na channel search failed for '{query}': {e}")
+            return []
+
+        results: List[Dict[str, Any]] = []
+        for channel in channels:
+            slug = channel.get("slug")
+            if not slug or not channel.get("length"):
+                continue
+            channel_title = channel.get("title") or slug
+            try:
+                async with self.session.get(
+                    f"{self.ARENA_API}/channels/{slug}/contents",
+                    params={"per": per_channel, "direction": "desc"},
+                    headers=headers,
+                    timeout=20,
+                ) as resp:
+                    resp.raise_for_status()
+                    blocks = (await resp.json()).get("contents", []) or []
+            except Exception as e:
+                logger.warning(f"Are.na contents failed for '{slug}': {e}")
+                continue
+
+            for block in blocks:
+                image = (block.get("image") or {})
+                display = (image.get("display") or {}).get("url")
+                if not display:
+                    continue
+                block_title = block.get("title") or block.get("generated_title") or channel_title
+                results.append({
+                    # Le titre d'un bloc est souvent un nom de fichier : c'est le nom
+                    # du channel qui porte le sens, donc il va dans la description
+                    # pour que la notation de pertinence puisse s'y accrocher.
+                    "title": str(block_title)[:200],
+                    # `source` vaut null sur les blocs téléversés directement
+                    "url": (block.get("source") or {}).get("url") or f"https://www.are.na/block/{block.get('id')}",
+                    "image_url": display,
+                    "thumbnail_url": (image.get("thumb") or {}).get("url") or display,
+                    "license": "Are.na — référence, droits non vérifiés",
+                    "description": f"Collection Are.na « {channel_title} »",
+                    "source_platform": "Are.na",
+                })
+
+        logger.info(f"✓ Are.na: {len(results)} images pour '{query}' ({len(channels)} collections)")
+        return results
 
     async def search_rss_images(
         self,
@@ -392,11 +686,38 @@ class WebResearchModule:
         """Recherche parallèle de références visuelles sur toutes les sources libres
         (Openverse, Art Institute of Chicago, Met, Wikimedia Commons, flux RSS design),
         dédoublonnée par image_url."""
-        searches = []
-        for q in queries[:3]:
-            searches += [self.search_openverse(q), self.search_aic(q), self.search_met(q), self.search_wikimedia_commons(q)]
-        searches.append(self.search_rss_images(keywords or queries, feeds))
-        batches = await asyncio.gather(*searches)
+        # Rendement mesuré le 20/09/2026 sur une requête d'art numérique :
+        # Openverse ~seule source utile, AIC ~3 %, Met 0 %, Wikimedia coupe en 429
+        # dès qu'on l'interroge en parallèle. D'où ce dosage.
+        factories = []
+        # Openverse est la seule source vraiment interrogeable : on lui donne
+        # toutes les requêtes, les autres n'en reçoivent que les premières.
+        for q in queries[:4]:
+            factories.append(lambda q=q: self.search_openverse(q))
+        for q in queries[:2]:
+            factories += [lambda q=q: self.search_aic(q), lambda q=q: self.search_met(q)]
+        if queries:
+            factories.append(lambda: self.search_wikimedia_commons(queries[0]))
+        # Are.na : la meilleure source pour l'art numérique contemporain, mais
+        # deux appels par requête — on la limite aux deux premières.
+        if getattr(app_settings, "ARENA_ACCESS_TOKEN", ""):
+            for q in queries[:2]:
+                factories.append(lambda q=q: self.search_arena(q))
+        factories.append(lambda: self.search_rss_images(keywords or queries, feeds))
+
+        # Une douzaine de requêtes simultanées saturait le résolveur DNS du conteneur
+        # (« Temporary failure in name resolution » sur des hôtes pourtant valides).
+        gate = asyncio.Semaphore(4)
+
+        async def _guarded(make):
+            async with gate:
+                return await make()
+
+        batches = await asyncio.gather(*(_guarded(f) for f in factories), return_exceptions=True)
+        for batch in batches:
+            if isinstance(batch, Exception):
+                logger.warning(f"Source visuelle en échec : {type(batch).__name__}: {batch}")
+        batches = [b for b in batches if isinstance(b, list)]
 
         # Tour de rôle entre les sources pour qu'aucune n'écrase les autres
         # quand on plafonne à max_total

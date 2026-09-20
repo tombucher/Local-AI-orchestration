@@ -1,0 +1,39 @@
+# ════════════════════════════════════════════════════════════
+# SearXNG — métamoteur auto-hébergé pour la veille
+# Remplace DuckDuckGo (bloqué) et Brave (payant) : pas de clé, pas de quota.
+# ════════════════════════════════════════════════════════════
+use_default_settings: true
+
+general:
+  instance_name: "Orchestrateur IA — veille"
+  # Pas de page de dons ni de statistiques publiques sur une instance perso
+  donation_url: false
+  enable_metrics: false
+
+search:
+  # ⚠️ `json` est indispensable : sans lui l'API répond 403.
+  # Par défaut SearXNG n'active que `html`.
+  formats:
+    - html
+    - json
+  safe_search: 0
+  autocomplete: ""
+  default_lang: "fr"
+
+server:
+  # Valeur ignorée : SearXNG lit `secret_key` depuis la variable d'environnement
+  # SEARXNG_SECRET (settings_defaults.py), fournie par .env via docker-compose.
+  # Ce fichier est versionné — n'y mettre aucun secret réel.
+  secret_key: "surchargé-par-la-variable-SEARXNG_SECRET"
+  limiter: false          # instance privée, liée à 127.0.0.1 : pas de bot à filtrer
+  image_proxy: false
+  method: "GET"           # l'API JSON est interrogée en GET
+
+ui:
+  static_use_hash: true
+
+outgoing:
+  request_timeout: 6.0
+  max_request_timeout: 12.0
+  pool_connections: 20
+  pool_maxsize: 10

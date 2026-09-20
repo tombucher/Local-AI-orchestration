@@ -49,7 +49,7 @@ async def test_register_duplicate_email(client: AsyncClient):
     )
     
     assert response.status_code == 400
-    assert "Email already registered" in response.json()["message"]
+    assert "déjà utilisé" in response.json()["message"]
 
 
 @pytest.mark.asyncio

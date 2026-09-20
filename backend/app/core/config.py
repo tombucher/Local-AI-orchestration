@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     # https://aides-territoires.beta.gouv.fr/api/ ; vide = source ignorée
     AIDES_TERRITOIRES_API_KEY: str = ""
 
+    # Are.na (moodboard) — jeton perso gratuit : https://dev.are.na/oauth/applications
+    # Vide = source ignorée. Les lectures publiques passent même sans jeton, mais
+    # le jeton évite les limitations de débit.
+    ARENA_ACCESS_TOKEN: str = ""
+
     # Ollama
     OLLAMA_HOST: str = "http://host.docker.internal:11434"
     OLLAMA_MODEL_MISTRAL: str = "mistral:7b-instruct-q4_K_M"
@@ -59,8 +64,12 @@ class Settings(BaseSettings):
     ORCHESTRATOR_INTERVAL_MINUTES: int = 2  # Intervalle entre chaque exécution du scheduler
     ORCHESTRATOR_BATCH_SIZE: int = 3  # Nombre de tâches en parallèle (M3 Max supporte 3-5 inférences)
 
-    # Search API — Brave Search (optionnel mais recommandé, 2000 requêtes/mois gratuit)
-    # Obtenir une clé gratuite sur https://api.search.brave.com
+    # Recherche web — SearXNG auto-hébergé (prioritaire s'il est configuré).
+    # Métamoteur local : pas de clé, pas de quota, agrège Google/Bing/Qwant.
+    # Le service `searxng` du docker-compose écoute sur http://searxng:8080.
+    SEARXNG_URL: str = ""
+
+    # Search API — Brave Search (repli ; l'offre gratuite n'existe plus)
     BRAVE_SEARCH_API_KEY: Optional[str] = None
 
     @field_validator("BRAVE_SEARCH_API_KEY", mode="before")

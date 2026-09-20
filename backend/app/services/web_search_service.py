@@ -2,6 +2,9 @@
 Service de recherche web
 
 Backends disponibles (par ordre de priorité) :
+0. SearXNG auto-hébergé — métamoteur local (gratuit, sans clé, sans quota)
+   → Configurer SEARXNG_URL dans .env (ex. http://searxng:8080)
+   → Le service `searxng` du docker-compose l'expose sur 127.0.0.1:8888
 1. Brave Search API — api.search.brave.com (gratuit, 2000 req/mois, fiable depuis Docker)
    → Configurer BRAVE_SEARCH_API_KEY dans docker-compose.yml ou .env
    → Clé gratuite sur https://api.search.brave.com
@@ -26,6 +29,7 @@ from bs4 import BeautifulSoup
 logger = logging.getLogger(__name__)
 
 _BRAVE_API_URL = "https://api.search.brave.com/res/v1/web/search"
+_SEARXNG_TIMEOUT = 20.0
 _DDG_HTML_URL = "https://html.duckduckgo.com/html/"
 _MAX_RETRIES = 4
 
@@ -40,6 +44,55 @@ _DDG_HEADERS = {
 
 
 # ─── Brave Search ──────────────────────────────────────────────────────────────
+
+def _searxng_search_sync(
+    query: str,
+    max_results: int,
+    base_url: str,
+    language: str = "fr",
+) -> List[Dict[str, Any]]:
+    """Interroge une instance SearXNG via son API JSON.
+
+    SearXNG agrège Google/Bing/Qwant/… : pas de clé, pas de quota, et il tourne
+    chez toi. Le format JSON doit être activé (`search.formats: [html, json]`),
+    sinon l'instance répond 403 — c'est le cas par défaut.
+    """
+    url = base_url.rstrip("/") + "/search"
+    params = {
+        "q": query,
+        "format": "json",
+        "language": language,
+        "safesearch": 0,
+    }
+    try:
+        with httpx.Client(timeout=_SEARXNG_TIMEOUT, follow_redirects=True) as client:
+            resp = client.get(url, params=params, headers={"Accept": "application/json"})
+        if resp.status_code == 403:
+            logger.error(
+                "SearXNG répond 403 : le format JSON n'est pas activé. Ajouter "
+                "`json` à `search.formats` dans searxng/settings.yml, puis "
+                "`docker compose restart searxng`."
+            )
+            return []
+        resp.raise_for_status()
+        payload = resp.json()
+    except Exception as e:
+        logger.warning(f"SearXNG indisponible ({base_url}): {e}")
+        return []
+
+    results = []
+    for item in (payload.get("results") or [])[:max_results]:
+        href = item.get("url")
+        if not href:
+            continue
+        results.append({
+            "title": item.get("title") or "Sans titre",
+            "href": href,
+            "body": item.get("content") or "",
+        })
+    logger.info(f"✓ SearXNG: {len(results)} résultats pour '{query}'")
+    return results
+
 
 def _brave_search_sync(
     query: str,
@@ -189,6 +242,13 @@ class WebSearchService:
             brave_api_key: Clé API Brave Search (override la config globale).
                           Si None, utilise BRAVE_SEARCH_API_KEY depuis les settings.
         """
+        self._searxng_url = None
+        try:
+            from app.core.config import settings
+            self._searxng_url = (settings.SEARXNG_URL or "").strip() or None
+        except Exception:
+            pass
+
         if brave_api_key is not None:
             self._brave_key = brave_api_key
         else:
@@ -198,7 +258,11 @@ class WebSearchService:
             except Exception:
                 self._brave_key = None
 
-        backend = "Brave Search API" if self._brave_key else "DuckDuckGo HTML (fallback)"
+        backend = (
+            "SearXNG" if self._searxng_url
+            else "Brave Search API" if self._brave_key
+            else "DuckDuckGo HTML (fallback)"
+        )
         logger.debug(f"WebSearchService initialized — backend: {backend}")
 
     async def search_text(
@@ -212,6 +276,18 @@ class WebSearchService:
         Retourne une liste de dicts : {title, href, body}
         """
         await asyncio.sleep(random.uniform(0.3, 1.2))
+
+        if self._searxng_url:
+            logger.info(f"🔎 SearXNG: '{query}' (max={max_results})")
+            results = await asyncio.to_thread(
+                _searxng_search_sync, query, max_results, self._searxng_url,
+                region.split("-")[0] if "-" in region else "fr",
+            )
+            if results:
+                logger.info(f"🔎 '{query}' → {len(results)} résultat(s)")
+                return results
+            # Instance en panne ou mal configurée : on ne perd pas la requête
+            logger.warning("SearXNG n'a rien rendu — repli sur le backend suivant")
 
         if self._brave_key:
             logger.info(f"🔎 Brave Search: '{query}' (max={max_results})")

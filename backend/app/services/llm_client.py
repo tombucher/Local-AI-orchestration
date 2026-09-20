@@ -17,6 +17,7 @@ import ollama
 from app.models.task import Task
 from app.core.config import settings
 from app.services.model_registry import resolve_model, think_kwargs
+from app.services.code_cleanup import strip_code_fences
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,13 @@ class OllamaClient:
         self.client = ollama.Client(host=host, timeout=300.0)
         logger.info(f"✅ Ollama client initialized: {host} (timeout: 300s)")
 
-    async def generate_code(self, task: Task, model_override: Optional[str] = None, user_settings: Optional[dict] = None) -> str:
+    async def generate_code(
+        self,
+        task: Task,
+        model_override: Optional[str] = None,
+        user_settings: Optional[dict] = None,
+        workspace_context: Optional[str] = None,
+    ) -> str:
         """
         Génère du code avec streaming pour détecter la fin
 
@@ -48,6 +55,7 @@ class OllamaClient:
             task: Tâche avec llm_prompt rempli
             model_override: Modèle spécifique à utiliser (sinon utilise config par défaut)
             user_settings: Paramètres utilisateur avec préférences de modèles
+            workspace_context: Plan de fichiers et code des autres tâches du projet
 
         Returns:
             Code généré (str)
@@ -57,7 +65,7 @@ class OllamaClient:
         """
         model = self._select_model(task, model_override, user_settings)
         is_qwen3 = self._is_qwen3_model(model)
-        prompt = self._build_prompt(task, is_qwen3)
+        prompt = self._build_prompt(task, is_qwen3, workspace_context)
         system_prompt = self._build_system_prompt(is_qwen3)
         options = self._get_llm_options(is_qwen3)
 
@@ -165,6 +173,13 @@ class OllamaClient:
             if is_qwen3 and '<think>' in full_response:
                 full_response = re.sub(r'<think>.*?</think>', '', full_response, flags=re.DOTALL).strip()
                 logger.info(f"🧹 [TASK-{task.id}] Cleaned <think> tags from qwen3 response")
+
+            # Les modèles encadrent presque toujours le code par ```lang … ``` :
+            # on écrit le fichier tel quel, donc ces marqueurs doivent sauter.
+            unfenced = strip_code_fences(full_response)
+            if unfenced != full_response.strip():
+                logger.info(f"🧹 [TASK-{task.id}] Fences Markdown retirées du code généré")
+            full_response = unfenced
 
             logger.info(f"✅ Code generated for task {task.id} ({len(full_response)} chars)")
             return full_response
@@ -361,11 +376,15 @@ class OllamaClient:
                 "Tu es un expert en développement logiciel. "
                 "Génère directement le code demandé, sans préambule ni explication. "
                 "Réponds en FRANÇAIS pour les commentaires de code. "
-                "Inclus la gestion d'erreurs et des commentaires clairs."
+                "Inclus la gestion d'erreurs et des commentaires clairs. "
+                "Ta réponse est écrite telle quelle dans un fichier : n'entoure JAMAIS "
+                "le code de balises Markdown ``` et n'ajoute aucun commentaire hors du fichier."
             )
         return (
             "Tu es un expert en développement logiciel. "
-            "Tu génères du code de qualité production avec des commentaires en français."
+            "Tu génères du code de qualité production avec des commentaires en français. "
+            "Ta réponse est écrite telle quelle dans un fichier : n'entoure JAMAIS le code "
+            "de balises Markdown ``` et n'ajoute ni introduction ni explication."
         )
 
     def _build_text_system_prompt(self, is_qwen3: bool) -> str:
@@ -399,8 +418,10 @@ class OllamaClient:
             }
         return {
             'temperature': 0.7,
-            'num_ctx': 4096,
-            'num_predict': 2000,
+            # Le contexte d'atelier (plan de fichiers + code des autres tâches)
+            # dépasse largement 4096 tokens : sans ça le prompt est tronqué.
+            'num_ctx': 16384,
+            'num_predict': 4096,
             'top_p': 0.9,
             'top_k': 40,
             'repeat_penalty': 1.1,
@@ -409,8 +430,8 @@ class OllamaClient:
             'stop': ['</s>'],
         }
 
-    def _build_prompt(self, task: Task, is_qwen3: bool = False) -> str:
-        """Construit le prompt adapté au modèle, incluant le feedback utilisateur si présent"""
+    def _build_prompt(self, task: Task, is_qwen3: bool = False, workspace_context: Optional[str] = None) -> str:
+        """Construit le prompt adapté au modèle, incluant le contexte d'atelier et le feedback"""
         # Section feedback si validation_notes existe (ajustement demandé)
         feedback_section = ""
         if hasattr(task, 'validation_notes') and task.validation_notes:
@@ -420,21 +441,25 @@ class OllamaClient:
                 feedback_section = f"\nFeedback précédent (IMPORTANT - prendre en compte ces remarques):\n{task.validation_notes}\n"
             logger.info(f"📝 [TASK-{task.id}] Including validation feedback in prompt: {task.validation_notes[:100]}...")
 
+        # Contexte d'atelier : plan de fichiers du projet + code déjà produit par
+        # les autres tâches. C'est ce qui permet au HTML de référencer le bon CSS.
+        workspace_section = f"{workspace_context}\n\n---\n\n" if workspace_context else ""
+
         if is_qwen3:
-            return f"""Task: {task.title}
+            return f"""{workspace_section}Task: {task.title}
 Description: {task.description or 'Not specified'}
 Context: {task.llm_prompt or 'None'}
 {feedback_section}
 Generate production-quality code. Include error handling and clear comments.
-Output ONLY the code, no explanations."""
-        return f"""Tâche: {task.title}
+Output ONLY the raw file content, with no explanations and no Markdown code fences."""
+        return f"""{workspace_section}Tâche: {task.title}
 
 Description: {task.description or 'Non spécifiée'}
 
 Contexte: {task.llm_prompt}
 {feedback_section}
-Génère du code Python de qualité avec commentaires et gestion des erreurs.
-Réponds UNIQUEMENT avec le code, sans markdown."""
+Génère du code de qualité avec commentaires et gestion des erreurs.
+Réponds UNIQUEMENT avec le contenu brut du fichier, sans phrase d'introduction et sans balises ```."""
 
     def _build_text_prompt(self, task: Task, is_qwen3: bool = False) -> str:
         """Construit le prompt pour du contenu texte (pas code) — research, admin, etc."""

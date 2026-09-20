@@ -12,10 +12,10 @@ from typing import List, Dict, Optional
 from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, insert
 from ollama import Client
 
-from app.models.task import Task, TaskPriority, TaskStatus, TaskType
+from app.models.task import Task, TaskPriority, TaskStatus, TaskType, task_dependencies
 from app.models.project import Project
 
 logger = logging.getLogger(__name__)
@@ -665,20 +665,29 @@ RÈGLES POUR LES VEILLES AUTOMATIQUES:
         title_to_task_map = {task.title: task for task in created_tasks}
 
         # Étape 3: Établir les dépendances entre les tâches
+        # Insertion directe dans la table d'association : après le commit ci-dessus les
+        # objets sont expirés, et lire `task.dependencies` déclencherait un lazy-load
+        # synchrone interdit en async (MissingGreenlet → 500).
+        links = []
+        seen = set()
         for suggestion in suggestions:
             current_task = title_to_task_map.get(suggestion.title)
             if not current_task:
                 continue
 
-            # Pour chaque dépendance, trouver la tâche correspondante et établir le lien
             for dep_title in suggestion.dependency_titles:
-                if dep_title and dep_title in title_to_task_map:
-                    dependent_task = title_to_task_map[dep_title]
-                    if dependent_task.id != current_task.id:  # Éviter les auto-références
-                        current_task.dependencies.append(dependent_task)
+                dependent_task = title_to_task_map.get(dep_title) if dep_title else None
+                if not dependent_task or dependent_task.id == current_task.id:
+                    continue  # Dépendance inconnue ou auto-référence
+                pair = (current_task.id, dependent_task.id)
+                if pair in seen:
+                    continue
+                seen.add(pair)
+                links.append({"task_id": pair[0], "depends_on_id": pair[1]})
 
-        # Commit final pour sauvegarder les dépendances
-        await self.db.commit()
+        if links:
+            await self.db.execute(insert(task_dependencies).values(links))
+            await self.db.commit()
 
         return created_tasks
 

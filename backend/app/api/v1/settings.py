@@ -2,6 +2,7 @@
 API endpoints for User Settings
 """
 import logging
+from datetime import datetime, timezone
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -11,9 +12,14 @@ from app.core.database import get_db
 from app.core.config import settings as app_settings
 from app.api.deps import get_current_user
 from app.models import User, UserSettings
+from app.models.rss_feed import RssFeed
 from app.schemas import (
     UserSettingsCreate, UserSettingsUpdate, UserSettingsResponse, OllamaModelInfo
 )
+from app.schemas.rss_feed import (
+    FeedCheckResult, RssFeedCreate, RssFeedResponse, RssFeedUpdate,
+)
+from app.services.feed_library import inspect_feed
 from app.services.llm_client import OllamaClient
 
 logger = logging.getLogger(__name__)
@@ -150,3 +156,132 @@ async def create_user_settings(
 
     logger.info(f"✅ Created settings for user {current_user.id}")
     return user_settings
+
+
+# ════════════════════════════════════════════════════════════
+# Bibliothèque de flux RSS
+# Les sources de veille utiles dépendent du sujet : c'est l'utilisateur qui
+# enrichit sa bibliothèque au fil de ses trouvailles. Chaque flux est vérifié
+# à l'ajout et ses thèmes déduits de son contenu.
+# ════════════════════════════════════════════════════════════
+
+@router.get("/feeds", response_model=List[RssFeedResponse])
+async def list_feeds(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Flux RSS enregistrés par l'utilisateur, les plus récents d'abord."""
+    result = await db.execute(
+        select(RssFeed).where(RssFeed.user_id == current_user.id).order_by(RssFeed.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+@router.post("/feeds/preview", response_model=FeedCheckResult)
+async def preview_feed(
+    payload: RssFeedCreate,
+    current_user: User = Depends(get_current_user),
+):
+    """Vérifie un flux sans l'enregistrer — pour afficher un aperçu avant l'ajout."""
+    return FeedCheckResult(**await inspect_feed(payload.url))
+
+
+@router.post("/feeds", response_model=RssFeedResponse, status_code=status.HTTP_201_CREATED)
+async def add_feed(
+    payload: RssFeedCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Ajoute un flux après vérification. Un flux injoignable ou vide est refusé."""
+    existing = await db.execute(
+        select(RssFeed).where(RssFeed.user_id == current_user.id, RssFeed.url == payload.url)
+    )
+    if existing.scalars().first():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ce flux est déjà dans ta bibliothèque",
+        )
+
+    check = await inspect_feed(payload.url)
+    if not check["ok"]:
+        # Refus explicite : mieux vaut le dire maintenant qu'un flux mort silencieux
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Flux inutilisable — {check['status']}",
+        )
+
+    feed = RssFeed(
+        user_id=current_user.id,
+        url=payload.url,
+        title=(payload.title or check["title"])[:255],
+        tags=payload.tags if payload.tags is not None else check["tags"],
+        enabled=True,
+        last_checked=datetime.now(timezone.utc),
+        last_status=check["status"],
+        last_entry_count=check["entry_count"],
+    )
+    db.add(feed)
+    await db.commit()
+    await db.refresh(feed)
+    logger.info(f"📰 Flux ajouté par l'utilisateur {current_user.id} : {feed.url}")
+    return feed
+
+
+@router.patch("/feeds/{feed_id}", response_model=RssFeedResponse)
+async def update_feed(
+    feed_id: int,
+    payload: RssFeedUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Renomme un flux, ajuste ses thèmes ou l'active/désactive."""
+    feed = await _get_own_feed(db, feed_id, current_user.id)
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(feed, field, value)
+    await db.commit()
+    await db.refresh(feed)
+    return feed
+
+
+@router.post("/feeds/{feed_id}/check", response_model=RssFeedResponse)
+async def check_feed(
+    feed_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Re-vérifie un flux et rafraîchit ses thèmes (les flux meurent sans prévenir)."""
+    feed = await _get_own_feed(db, feed_id, current_user.id)
+    check = await inspect_feed(feed.url)
+    feed.last_checked = datetime.now(timezone.utc)
+    feed.last_status = check["status"]
+    feed.last_entry_count = check["entry_count"]
+    if check["ok"]:
+        feed.tags = check["tags"]
+        if not feed.title:
+            feed.title = check["title"][:255]
+    await db.commit()
+    await db.refresh(feed)
+    return feed
+
+
+@router.delete("/feeds/{feed_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_feed(
+    feed_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retire un flux de la bibliothèque."""
+    feed = await _get_own_feed(db, feed_id, current_user.id)
+    await db.delete(feed)
+    await db.commit()
+
+
+async def _get_own_feed(db: AsyncSession, feed_id: int, user_id: int) -> RssFeed:
+    """Récupère un flux en garantissant qu'il appartient bien à l'utilisateur."""
+    result = await db.execute(
+        select(RssFeed).where(RssFeed.id == feed_id, RssFeed.user_id == user_id)
+    )
+    feed = result.scalars().first()
+    if not feed:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Flux introuvable")
+    return feed

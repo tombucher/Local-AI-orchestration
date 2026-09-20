@@ -479,7 +479,9 @@ async def create_suggested_tasks(
             )
         )
         existing_result = await db.execute(existing_query)
-        existing_topic = existing_result.scalar_one_or_none()
+        # .first() et non scalar_one_or_none() : des doublons de scope existent
+        # en base sur d'anciens projets (MultipleResultsFound → 500)
+        existing_topic = existing_result.scalars().first()
 
         if not existing_topic:
             # Créer le nouveau topic, planifié immédiatement pour le 1er scan

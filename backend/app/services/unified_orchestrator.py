@@ -11,6 +11,7 @@ Gère tous les types de tâches :
 """
 import asyncio
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
@@ -21,6 +22,7 @@ from sqlalchemy.orm import aliased
 from app.models.task import Task, TaskStatus, TaskType, task_dependencies
 from app.models.task_log import TaskLog, TaskEventType
 from app.models.veille_topic import VeilleTopic, VeilleScope
+from app.models.rss_feed import RssFeed
 from app.models.veille_result import VeilleResult, VeilleResultType, VeilleResultStatus
 from app.models.user_settings import UserSettings
 from app.models.project import Project
@@ -31,8 +33,50 @@ from app.services.modules.document_generator import DocumentGeneratorModule
 from app.services.web_search_service import WebSearchService
 from app.core.config import settings as app_settings
 from app.services.model_registry import resolve_model, think_kwargs
+from app.services.project_workspace import build_workspace_context
+from app.services.project_memory import build_project_memory, score_against_memory
 
 logger = logging.getLogger(__name__)
+
+
+# Mots trop courants dans les fonds d'images pour valider à eux seuls un résultat :
+# « Aesthetic Function in Space » n'est pas une référence glitch.
+GENERIC_VISUAL_TERMS = {
+    'art', 'arts', 'design', 'digital', 'image', 'images', 'photo', 'photography',
+    'picture', 'visual', 'modern', 'contemporary', 'abstract', 'high', 'new',
+    'style', 'aesthetic', 'aesthetics', 'colour', 'color', 'colors', 'work', 'print',
+    # Trop courants aussi dans les titres d'articles (filtrage RSS)
+    'graphics', 'graphic', 'inspiration', 'page', 'site', 'web', 'internet',
+    'online', 'project', 'research', 'creative', 'coding', 'mise',
+}
+
+
+def _merge_queries(*groups: List[str], limit: int = 4) -> List[str]:
+    """Fusionne des listes de requêtes en gardant l'ordre et en dédoublonnant."""
+    merged: List[str] = []
+    for group in groups:
+        for query in group:
+            query = (query or '').strip()
+            if query and query.casefold() not in {m.casefold() for m in merged}:
+                merged.append(query)
+    return merged[:limit]
+
+
+def _query_terms(queries: List[str]) -> List[List[str]]:
+    """Termes distinctifs de chaque requête, requête par requête.
+
+    Le regroupement compte : la notation mesure la couverture d'UNE requête, donc
+    croiser tous les mots de « haiku poster » vaut plus que croiser le seul « light ».
+    Les mots génériques sont écartés — ils reviennent dans la moitié des fonds
+    d'images et feraient passer n'importe quoi pour pertinent.
+    """
+    per_query: List[List[str]] = []
+    for query in queries:
+        words = re.findall(r"[a-zà-öø-ÿ0-9][\w'’-]{2,}", query.casefold())
+        distinctive = [w for w in dict.fromkeys(words) if w not in GENERIC_VISUAL_TERMS]
+        if distinctive:
+            per_query.append(distinctive)
+    return per_query
 
 
 class UnifiedOrchestrator:
@@ -215,14 +259,27 @@ class UnifiedOrchestrator:
         logger.info(f"✅ Task {task.id} ({task.task_type.value}) → {next_status}")
 
     async def _handle_code_generation(self, task: Task) -> None:
-        """Gère la génération de code (module existant)"""
+        """Gère la génération de code, en partageant le contexte des autres tâches du projet"""
         logger.info(f"💻 Generating code for task {task.id}")
 
         project = await self._get_project(task.project_id)
         model = await self._get_task_model(project.user_id)
 
-        code = await self.llm_client.generate_code(task, model_override=model)
+        # Les tâches d'un même projet se répartissent les fichiers (HTML / CSS / JS…) :
+        # sans ce contexte chacune génère dans son coin et rien ne se relie.
+        workspace = await build_workspace_context(self.db, task, project)
+
+        code = await self.llm_client.generate_code(
+            task, model_override=model, workspace_context=workspace.text
+        )
         task.generated_code = code
+
+        # Figer le fichier attribué par le plan : les tâches suivantes s'y réfèrent
+        if workspace.own_path:
+            metadata = dict(task.task_metadata or {})
+            if metadata.get('artifact_path') != workspace.own_path:
+                metadata['artifact_path'] = workspace.own_path
+                task.task_metadata = metadata
 
     async def _handle_veille(self, task: Task) -> None:
         """Gère les tâches de veille — type unifié
@@ -257,7 +314,9 @@ class UnifiedOrchestrator:
             return
 
         # Générer des requêtes DuckDuckGo ciblées via LLM (fallback basique si LLM off)
-        queries = await self._generate_veille_queries(task, model, veille_topic)
+        # Carnet du projet : sans lui la veille ne voit que le titre de sa tâche
+        memory = await build_project_memory(self.db, project, veille_topic)
+        queries = await self._generate_veille_queries(task, model, veille_topic, memory)
         web_search = WebSearchService()
 
         # Phase 1 : Recherche web via DuckDuckGo (parallélisée avec asyncio.gather)
@@ -282,21 +341,59 @@ class UnifiedOrchestrator:
         search_results = await asyncio.gather(*[_search_one(q) for q in queries])
         raw_results = [r for batch in search_results for r in batch]
 
-        # RSS optionnel si configuré
-        if task.task_metadata and task.task_metadata.get('rss_feeds'):
-            async with WebResearchModule() as research:
-                for feed_url in task.task_metadata['rss_feeds']:
-                    try:
-                        feed_results = await research.fetch_rss_feed(feed_url)
-                        for fr in feed_results:
-                            raw_results.append({
-                                'title': fr.get('title', ''),
-                                'url': fr.get('link', fr.get('url', '')),
-                                'description': fr.get('description', fr.get('summary', '')),
-                                'source_platform': 'RSS',
-                            })
-                    except Exception as e:
-                        logger.warning(f"RSS feed failed: {feed_url}: {e}")
+        # Phase 1 bis : flux RSS. Source gratuite et fiable là où DuckDuckGo répond
+        # souvent 403 et où Brave est payant. Les flux du topic priment sur les
+        # listes par défaut ; `task_metadata['rss_feeds']` reste accepté.
+        feed_urls = [
+            str(src) for src in (
+                (task.task_metadata or {}).get('rss_feeds')
+                or (veille_topic.sources if veille_topic else None)
+                or []
+            ) if str(src).startswith('http')
+        ]
+        scope_name = veille_topic.scope.value if veille_topic else 'news'
+
+        # Anti-doublon persistant : les URLs déjà vues pour ce sujet sont écartées,
+        # pour que chaque scan ne ramène que du neuf (équivalent en base du fichier
+        # d'historique de l'outil OpenWebUI, mais par sujet et sans fichier à gérer).
+        seen_before: set = set()
+        if veille_topic:
+            seen_before = set((await self.db.execute(
+                select(VeilleResult.url).where(
+                    VeilleResult.topic_id == veille_topic.id,
+                    VeilleResult.url.isnot(None),
+                )
+            )).scalars().all())
+
+        # Termes de filtrage : mots-clés du sujet, vocabulaire du projet, et surtout
+        # les termes des requêtes générées — elles comptent 2 formulations FR et 2 EN,
+        # ce qui fait le pont vers les flux anglophones.
+        # Uniquement des termes DISTINCTIFS : le vocabulaire en prose du projet
+        # (« page », « site », « interactive ») faisait passer n'importe quel article.
+        feed_terms = [k for k in keywords if k.casefold() not in GENERIC_VISUAL_TERMS]
+        for group in _query_terms(queries):
+            feed_terms += group
+
+        # Bibliothèque personnelle de l'utilisateur : les sources qu'il a ajoutées
+        # au fil de ses recherches priment sur le catalogue intégré.
+        user_feeds = [
+            {"url": f.url, "tags": f.tags or []}
+            for f in (await self.db.execute(
+                select(RssFeed).where(RssFeed.user_id == project.user_id, RssFeed.enabled.is_(True))
+            )).scalars().all()
+        ]
+
+        async with WebResearchModule() as research:
+            rss_results = await research.search_rss_articles(
+                terms=feed_terms,
+                feeds=feed_urls or None,
+                scope=scope_name,
+                exclude_urls=seen_before,
+                user_feeds=user_feeds,
+            )
+        raw_results += rss_results
+        logger.info(f"📰 RSS : {len(rss_results)} articles neufs ajoutés "
+                    f"({len(seen_before)} déjà vus ignorés, {len(user_feeds)} flux perso disponibles)")
 
         # Dédoublonner par URL
         seen_urls = set()
@@ -431,13 +528,33 @@ class UnifiedOrchestrator:
         keywords = topic.keywords or self._extract_keywords(task)
         excluded = [k.casefold() for k in (topic.excluded_keywords or [])]
 
-        # Requêtes anglaises courtes (les APIs d'images répondent mieux en anglais)
-        queries = await self._generate_visual_queries(task, keywords)
+        # Sans le carnet du projet, un topic sans mots-clés cherchait littéralement
+        # « veille visuelle » et ramenait des avions de ligne et des vierges à l'enfant.
+        memory = await build_project_memory(self.db, project, topic)
+
+        # Requêtes anglaises courtes (les APIs d'images répondent mieux en anglais).
+        # Les mots-clés saisis par l'utilisateur passent en premier : ils expriment
+        # son intention explicite, là où le LLM varie d'une exécution à l'autre.
+        queries = _merge_queries(
+            [' '.join(str(k).split()[:3]) for k in (topic.keywords or [])],
+            await self._generate_visual_queries(task, keywords, memory),
+        )
+
+        # Le carnet est en français, les banques d'images indexent en anglais :
+        # les requêtes traduites servent de pont pour la notation lexicale.
+        strong_terms = _query_terms(queries)
+        flat_terms = [t for group in strong_terms for t in group]
+        memory.extend_vocabulary(*queries, *(keywords or []))
+
+        # Les flux RSS ne sont pas interrogeables : ils sont filtrés sur des termes.
+        # Leur passer `keywords` était inutile quand le topic n'en a pas — d'où zéro
+        # résultat design alors que ce sont les meilleures sources pour ce projet.
+        feed_terms = [k for k in (keywords or []) if k.casefold() != task.title.casefold()]
 
         async with WebResearchModule() as research:
             images = await research.search_visual_references(
                 queries,
-                keywords=keywords,
+                keywords=(feed_terms + flat_terms) or None,
                 feeds=[src for src in (topic.sources or []) if str(src).startswith("http")] or None,
             )
 
@@ -451,6 +568,22 @@ class UnifiedOrchestrator:
                 )
             ]
 
+        # Notation par recouvrement avec le vocabulaire du projet, puis coupe.
+        # Les APIs musée (Met, AIC) répondent par du repli classique dès que la
+        # requête sort de leur fonds : sans ce tri le moodboard est du bruit.
+        total_found = len(images)
+        if memory.is_thin() and not strong_terms:
+            for img in images:
+                img['relevance_score'] = 50.0
+        else:
+            for img in images:
+                img['relevance_score'] = score_against_memory(img, memory, strong_terms)
+            images.sort(key=lambda i: i['relevance_score'], reverse=True)
+            # 60 = couverture complète d'une requête courte, ou large majorité
+            # d'une requête de deux mots. En dessous c'est de la coïncidence.
+            images = [img for img in images if img['relevance_score'] >= 60.0][:24]
+            logger.info(f"🖼 Pertinence : {len(images)}/{total_found} références au-dessus du seuil")
+
         for img in images:
             self.db.add(VeilleResult(
                 topic_id=topic.id,
@@ -463,39 +596,85 @@ class UnifiedOrchestrator:
                 thumbnail_url=img.get('thumbnail_url'),
                 license=img.get('license'),
                 source_platform=img.get('source_platform'),
-                # Pas de scoring LLM par image : score neutre, l'utilisateur trie
-                relevance_score=50.0,
+                # Score lexical (pas de LLM par image : trop lent en local)
+                relevance_score=img.get('relevance_score', 50.0),
                 status=VeilleResultStatus.NEW,
             ))
 
         await self.db.flush()
-        task.generated_code = (
-            f"Veille visuelle : {len(images)} références collectées "
-            f"({', '.join(sorted(set(i.get('source_platform', '') for i in images)))})."
-        )
+        sources = ', '.join(sorted(set(i.get('source_platform', '') for i in images))) or '—'
+        report = [
+            f"Veille visuelle : {len(images)} références retenues sur {total_found} trouvées ({sources}).",
+            f"Requêtes utilisées : {' ; '.join(queries)}",
+        ]
+        if not images:
+            report.append(
+                "Aucune image ne correspondait vraiment au projet : mieux vaut un moodboard vide "
+                "qu'un moodboard au hasard. Précise les mots-clés de la veille, ou ajoute des flux "
+                "RSS adaptés dans les sources du topic."
+            )
+        elif len(images) < total_found / 4:
+            report.append(
+                "Peu de résultats pertinents : les sources interrogées couvrent mal ce sujet. "
+                "Des mots-clés plus précis sur le topic amélioreront nettement la récolte."
+            )
+        task.generated_code = "\n".join(report)
         logger.info(f"🖼 Visual veille done: {len(images)} references saved")
 
-    async def _generate_visual_queries(self, task: Task, keywords: List[str]) -> List[str]:
-        """Génère 2-3 requêtes anglaises courtes pour les APIs d'images."""
-        base = ", ".join(keywords[:5]) if keywords else task.title
-        prompt = f"""Translate and condense into 3 short English image-search queries (2-4 words each) for finding visual references about: {base}
+    async def _generate_visual_queries(self, task: Task, keywords: List[str], memory=None) -> List[str]:
+        """Génère 2-3 requêtes anglaises courtes pour les APIs d'images.
 
-One query per line, no numbering, no quotes, English only."""
+        Les requêtes sortent du carnet du projet, pas du titre de la tâche : « Veille
+        visuelle » ne décrit rien et produisait des résultats aléatoires.
+        """
+        base = ", ".join(keywords[:5]) if keywords else task.title
+        brief = getattr(memory, 'brief', '') or ''
+        avoid = getattr(memory, 'disliked', []) or []
+
+        context_block = f"PROJECT BRIEF (source of truth):\n{brief}\n\n" if brief else ""
+        avoid_block = (
+            "AVOID anything resembling: " + " ; ".join(f'"{t}"' for t in avoid[:4]) + "\n"
+        ) if avoid else ""
+
+        # Openverse / AIC / Met / Commons font de la recherche par MOTS-CLES, pas
+        # semantique : mesure du 20/09/2026 — « glitch » rend 20 images de glitch,
+        # « glitch art brutalist aesthetic » en rend zero. D'ou des requetes tres courtes.
+        prompt = f"""{context_block}Write 3 very short English image-search queries to find VISUAL references for the moodboard of this project. Focus on what the images should LOOK LIKE: medium, technique, material, aesthetic.
+
+Keywords given by the user: {base}
+{avoid_block}
+RULES:
+- English only, ONE or TWO words per query - three at the very most
+- These are keyword image databases, NOT semantic search: long queries return NOTHING
+- Use the single most distinctive visual term, e.g. "glitch", "typography", "light installation", "generative art"
+- Never describe the research activity ("visual watch", "moodboard", "inspiration" are FORBIDDEN)
+- Three different angles on the project, one query per line, no numbering, no quotes"""
         try:
             response = await self.analyzer._generate_text_async(
                 prompt, model=self.analyzer._FAST_FALLBACK_MODEL
             )
+            BANNED = ('visual watch', 'visual monitoring', 'veille', 'moodboard',
+                      'mood board', 'inspiration board', 'image search', 'references')
             queries = [
                 line.strip().lstrip('-•*0123456789.) ').strip('"\'« »')
                 for line in response.strip().split('\n')
                 if 2 < len(line.strip()) < 60
-            ][:3]
+            ]
+            queries = [q for q in queries if not any(b in q.casefold() for b in BANNED)]
+            # Filet : le modele rallonge souvent malgre la consigne, et au-dela
+            # de trois mots ces APIs ne renvoient plus rien du tout
+            queries = [' '.join(q.split()[:3]) for q in queries][:3]
             if queries:
                 logger.info(f"🖼 Visual queries: {queries}")
                 return queries
         except Exception as e:
             logger.warning(f"Visual query generation failed: {e}")
-        return [" ".join(keywords[:3])] if keywords else [task.title]
+        if keywords:
+            return [" ".join(keywords[:3])]
+        vocabulary = getattr(memory, 'vocabulary', []) or []
+        if vocabulary:
+            return [" ".join(vocabulary[:3])]
+        return [task.title]
 
     async def _handle_document_writing(self, task: Task) -> None:
         """Gère la rédaction de documents"""
@@ -538,7 +717,8 @@ One query per line, no numbering, no quotes, English only."""
         keywords = self._extract_keywords(task)
 
         # Recherche web orientée financements
-        queries = await self._generate_funding_queries(task)
+        funding_memory = await build_project_memory(self.db, project)
+        queries = await self._generate_funding_queries(task, funding_memory)
         web_search = WebSearchService()
 
         async def _search_one(query: str) -> list:
@@ -870,17 +1050,20 @@ Sois concret et directement applicable. Format Markdown."""
 
         return [task.title]
 
-    async def _generate_funding_queries(self, task: Task) -> List[str]:
+    async def _generate_funding_queries(self, task: Task, memory=None) -> List[str]:
         """Génère des requêtes DDG orientées appels à projets / résidences / subventions."""
         description = (task.description or "").strip()
         title = (task.title or "").strip()
         objective = f"{title}\n{description}" if description and description != title else title
         year = datetime.now(timezone.utc).year
 
+        brief = getattr(memory, 'brief', '') or ''
+        project_block = f"{brief}\n\n" if brief else ""
+
         prompt = f"""Tu es un expert en recherche de financements pour des projets artistiques et technologiques en France. Génère 4 requêtes de recherche DuckDuckGo pour trouver des appels à projets, résidences, subventions ou bourses correspondant au projet ci-dessous.
 
 PROJET :
-{objective}
+{project_block}{objective}
 
 EXEMPLES DE BONNES REQUÊTES :
 - appel à projets art numérique {year}
@@ -928,7 +1111,7 @@ Requêtes :"""
             queries.append(f"{' '.join(keywords[:3])} 2025 2026")
         return queries[:3]
 
-    async def _generate_veille_queries(self, task: Task, model: str, veille_topic=None) -> List[str]:
+    async def _generate_veille_queries(self, task: Task, model: str, veille_topic=None, memory=None) -> List[str]:
         """
         Génère 4 requêtes de recherche ciblées via LLM.
         Utilise le titre ET la description de la tâche, plus l'historique
@@ -978,9 +1161,12 @@ Requêtes :"""
                     + "\n- ".join(parts) + "\n"
                 )
 
+        brief = getattr(memory, 'brief', '') or ''
+        project_block = f"CONTEXTE DU PROJET :\n{brief}\n\n" if brief else ""
+
         prompt = f"""Tu es un expert en veille et recherche sur internet. Génère 4 requêtes de recherche DuckDuckGo efficaces pour trouver ce qui est demandé ci-dessous.
 
-OBJECTIF :
+{project_block}OBJECTIF :
 {objective}
 {refinement_context}
 EXEMPLES DE BONNES REQUÊTES (style naturel, courtes, qui fonctionnent bien sur DDG) :

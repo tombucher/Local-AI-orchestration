@@ -11,6 +11,7 @@ import { Sidebar } from '../components/Layout/Sidebar';
 import { settingsApi } from '../services/settingsApi';
 import { OllamaModel, UserSettings } from '../types/settings';
 import Loader from '../components/ui/Loader';
+import FeedLibrary from '../components/settings/FeedLibrary';
 
 type ModelType = 'code' | 'text' | 'ideation' | 'analysis' | 'task_generation';
 
@@ -286,6 +287,11 @@ export const Settings = () => {
                     </div>
                   );
                 })}
+              </div>
+
+              {/* Bibliothèque de flux RSS pour la veille */}
+              <div className="mt-6">
+                <FeedLibrary />
               </div>
 
               {/* Info supplémentaire */}
