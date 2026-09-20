@@ -11,6 +11,7 @@ from app.models.veille_topic import VeilleTopic, VeilleScope
 from app.models.veille_result import VeilleResult, VeilleResultType, VeilleResultStatus
 from app.models.ideation_message import IdeationMessage, MessageRole
 from app.models.daily_report import DailyReport
+from app.models.rss_feed import RssFeed
 
 __all__ = [
     "User",
@@ -23,4 +24,5 @@ __all__ = [
     "VeilleResult", "VeilleResultType", "VeilleResultStatus",
     "IdeationMessage", "MessageRole",
     "DailyReport",
+    "RssFeed",
 ]

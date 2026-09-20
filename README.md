@@ -10,11 +10,11 @@ Outil personnel de pilotage de projets créatifs (art numérique + tech) assist�
 
 **Pilotage** — idéation par dialogue (streaming), analyse IA en tâches avec dépendances, chemin critique + frise Gantt, score de maturité, chrono par tâche.
 
-**Action** — génération de code (revue, édition inline, regénération avec instructions), génération de documents, veille par scope (actualités, tech, culturelle, financements, académique, visuelle) récurrente ou one-shot, rapport radar avec affinage, appels à projets avec extraction des deadlines, moodboard d'images libres.
+**Action** — génération de code (revue, édition inline, regénération avec instructions), génération de documents, veille par scope (actualités, tech, culturelle, financements, académique, visuelle) récurrente ou one-shot, alimentée par DuckDuckGo et des flux RSS curatés avec anti-doublon, rapport radar avec affinage, appels à projets avec extraction des deadlines, moodboard d'images libres.
 
 **Proactivité** — briefing du matin (top 3, prochaine action évidente par projet, échéances), détection de projets qui stagnent avec suggestions de relance, célébrations et séries.
 
-**Socle** — scheduler APScheduler, retry avec backoff, watchdog, registre de modèles Ollama avec repli automatique, design system éditorial, PWA installable, tests backend, sauvegardes Postgres quotidiennes.
+**Socle** — carnet de projet partagé par toutes les actions, plan de fichiers partagé entre les tâches de code, scheduler APScheduler, retry avec backoff, watchdog, registre de modèles Ollama avec repli automatique, design system éditorial, PWA installable, tests backend, sauvegardes Postgres quotidiennes.
 
 ---
 
@@ -46,6 +46,7 @@ docker compose exec backend alembic upgrade head
 | Interface | http://localhost:5173 |
 | API Swagger | http://localhost:8000/docs |
 | Open WebUI (chat Ollama) | http://localhost:3001 (localhost uniquement) |
+| SearXNG (métamoteur de veille) | http://localhost:8888 (localhost uniquement) |
 | PostgreSQL | 127.0.0.1:5432 (localhost uniquement) |
 
 Créer un compte via l'interface, puis choisir tes modèles dans **Paramètres**.
@@ -58,7 +59,8 @@ Créer un compte via l'interface, puis choisir tes modèles dans **Paramètres**
 2. **Analyser avec l'IA** → coche les tâches proposées, elles sont créées avec leurs dépendances et leurs veilles.
 3. Sur une tâche **code** ou **document** : « Générer maintenant », puis valide, édite ou regénère avec des instructions.
 4. Crée une **veille** (type + fréquence, dont « une seule fois ») ; les veilles **visuelles** alimentent le **Moodboard** du projet.
-5. Chaque matin, le **briefing** sur le dashboard te dit par quoi commencer.
+5. Dans **Paramètres → Mes flux de veille**, ajoute les flux RSS que tu croises : ils alimentent la veille en priorité.
+6. Chaque matin, le **briefing** sur le dashboard te dit par quoi commencer.
 
 ---
 
@@ -67,7 +69,7 @@ Créer un compte via l'interface, puis choisir tes modèles dans **Paramètres**
 ```bash
 docker compose ps                         # état des services
 docker compose logs -f backend            # logs backend
-./run_tests.sh                            # 39 tests backend
+./run_tests.sh                            # 94 tests backend
 docker compose up -d --build backend      # rebuild après changement de dépendances
 docker compose exec backend alembic upgrade head
 ls backups/                               # sauvegardes Postgres quotidiennes (14 jours)
@@ -89,7 +91,9 @@ gunzip -c backups/orchestrator-YYYYMMDD-HHMM.sql.gz | docker compose exec -T pos
 | `BACKEND_CORS_ORIGINS` | Origines autorisées (liste JSON) |
 | `OLLAMA_MODEL_PROMPT` | Modèle rapide pour veille / scoring / briefing (`gemma4:12b-mlx`) |
 | `AIDES_TERRITOIRES_API_KEY` | Optionnel — aides publiques FR avec deadlines structurées |
-| `BRAVE_SEARCH_API_KEY` | Optionnel — remplace DuckDuckGo (plus fiable) |
+| `SEARXNG_URL`, `SEARXNG_SECRET` | Métamoteur local, **backend de recherche prioritaire** (ni clé ni quota). `SEARXNG_SECRET` : 64 hex |
+| `BRAVE_SEARCH_API_KEY` | Repli optionnel — l'offre gratuite de Brave n'existe plus |
+| `ARENA_ACCESS_TOKEN` | Optionnel — moodboard enrichi des collections Are.na ([jeton gratuit](https://dev.are.na/oauth/applications)) ; images = références, **pas** libres de droits |
 | `NTFY_TOPIC` (+ `NTFY_URL`, `NTFY_TOKEN`) | Optionnel — envoie le briefing de 8h sur le téléphone via l'app ntfy |
 | `APP_PUBLIC_URL` | Optionnel — URL publique (Tailscale) utilisée dans les notifications |
 
@@ -131,6 +135,8 @@ Isolation par utilisateur sur tous les endpoints, JWT 7 jours, bcrypt, Postgres 
 
 ## 🧱 Stack
 
+**Recherche** : SearXNG auto-hébergé (métamoteur) · flux RSS étiquetés · Openverse / Wikimedia / Are.na pour les images.
+
 **Backend** : FastAPI 0.141 · SQLAlchemy 2.0 async · PostgreSQL 15 · Alembic · Pydantic 2 · APScheduler · ollama-python · aiohttp/BeautifulSoup/feedparser.
 
 **Frontend** : React 18 · TypeScript 5 · Vite 5 · react-router 7 · Zustand · TailwindCSS 3 · react-hook-form + zod · react-markdown · Fraunces / Archivo / JetBrains Mono (Fontsource).
@@ -143,6 +149,9 @@ Isolation par utilisateur sur tous les endpoints, JWT 7 jours, bcrypt, Postgres 
 |---|---|
 | Génération qui échoue « model not found » | Le modèle configuré a été supprimé d'Ollama : rechoisis-en un dans Paramètres (`ollama list`) |
 | Veille sans résultats, 403 DuckDuckGo | Rate-limit temporaire ; ajoute `BRAVE_SEARCH_API_KEY` |
+| Veille sans résultats | `docker compose ps searxng` ; si l'API renvoie 403, vérifier que `json` figure dans `search.formats` de `searxng/settings.yml` puis `docker compose restart searxng` |
+| Veille textuelle pauvre | Ajoute tes flux dans **Paramètres → Mes flux de veille** ; ils sont vérifiés et étiquetés, et passent avant le catalogue par défaut |
+| Moodboard vide ou très peu d'images | Normal si les sources couvrent mal le sujet : renseigne des mots-clés courts et concrets sur le topic (ils servent directement de requêtes) |
 | Tâche bloquée en GENERATING | Le watchdog la passe en FAILED après 15 min, puis retry |
 | Erreur « attached to a different loop » dans les tests | Relancer `./run_tests.sh` (moteur de test par fonction) |
 | Backend injoignable | `docker compose logs backend`, puis `docker compose restart backend` |

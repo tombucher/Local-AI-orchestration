@@ -38,9 +38,14 @@ api.interceptors.request.use(
   }
 );
 
-/** Extrait un message lisible d'une erreur FastAPI (detail string, message, ou erreurs de validation 422) */
-function extractErrorMessage(error: AxiosError): string {
-  const data = error.response?.data as any;
+/**
+ * Extrait un message lisible d'une erreur FastAPI (detail string, message, ou erreurs de validation 422).
+ * Accepte `unknown` : c'est le type d'un `catch` en TypeScript strict, et cette
+ * fonction est justement faite pour y être appelée directement.
+ */
+function extractErrorMessage(error: unknown): string {
+  const err = (error ?? {}) as AxiosError;
+  const data = err.response?.data as any;
   if (data) {
     if (typeof data.detail === 'string') return data.detail;
     if (typeof data.message === 'string') return data.message;
@@ -55,10 +60,10 @@ function extractErrorMessage(error: AxiosError): string {
         .join(' ; ');
     }
   }
-  if (error.code === 'ERR_NETWORK') {
+  if (err.code === 'ERR_NETWORK') {
     return 'Serveur injoignable — vérifiez que le backend tourne.';
   }
-  return error.message || 'Une erreur est survenue';
+  return err.message || 'Une erreur est survenue';
 }
 
 // Intercepteur Response : 401 → login, autres erreurs → toast

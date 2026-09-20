@@ -6,7 +6,7 @@
  */
 
 import { create } from 'zustand';
-import { api } from '../services/api';
+import { api, extractErrorMessage } from '../services/api';
 import { API_ROUTES, STORAGE_KEYS } from '../utils/constants';
 import { User, RegisterRequest, TokenResponse } from '../types/auth.types';
 
@@ -69,18 +69,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       });
     } catch (error: any) {
       // Gestion des erreurs de validation FastAPI (422)
-      let errorMessage = 'Erreur de connexion';
-
-      if (error.response?.data?.detail) {
-        // Si detail est un array (erreur de validation FastAPI)
-        if (Array.isArray(error.response.data.detail)) {
-          errorMessage = error.response.data.detail
-            .map((err: any) => err.msg || 'Erreur de validation')
-            .join(', ');
-        } else if (typeof error.response.data.detail === 'string') {
-          errorMessage = error.response.data.detail;
-        }
-      }
+      const errorMessage = extractErrorMessage(error);
 
       set({
         user: null,
@@ -110,18 +99,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       await login(data.email, data.password);
     } catch (error: any) {
       // Gestion des erreurs de validation FastAPI (422)
-      let errorMessage = 'Erreur lors de l\'inscription';
-
-      if (error.response?.data?.detail) {
-        // Si detail est un array (erreur de validation FastAPI)
-        if (Array.isArray(error.response.data.detail)) {
-          errorMessage = error.response.data.detail
-            .map((err: any) => err.msg || 'Erreur de validation')
-            .join(', ');
-        } else if (typeof error.response.data.detail === 'string') {
-          errorMessage = error.response.data.detail;
-        }
-      }
+      const errorMessage = extractErrorMessage(error);
 
       set({
         isLoading: false,
