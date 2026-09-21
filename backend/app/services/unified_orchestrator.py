@@ -37,6 +37,7 @@ from app.services.project_workspace import build_workspace_context
 from app.services.project_memory import build_project_memory, score_against_memory
 from app.services.task_progress import clear_progress, set_progress
 from app.services.project_documents import build_document_context
+from app.services.visual_scoring import score_images_with_vision, titre_illisible
 
 logger = logging.getLogger(__name__)
 
@@ -603,26 +604,39 @@ class UnifiedOrchestrator:
         # requête sort de leur fonds : sans ce tri le moodboard est du bruit.
         set_progress(task.id, "scoring", f"Tri de {len(images)} références…")
         total_found = len(images)
+
+        # 1er tri, lexical et instantané : il sert surtout à choisir quelles
+        # images valent le coût d'un regard du modèle.
         if memory.is_thin() and not strong_terms:
             for img in images:
                 img['relevance_score'] = 50.0
         else:
             for img in images:
                 img['relevance_score'] = score_against_memory(img, memory, strong_terms)
-            images.sort(key=lambda i: i['relevance_score'], reverse=True)
-            # 60 = couverture complète d'une requête courte, ou large majorité
-            # d'une requête de deux mots. En dessous c'est de la coïncidence.
-            images = [img for img in images if img['relevance_score'] >= 60.0][:24]
-            logger.info(f"🖼 Pertinence : {len(images)}/{total_found} références au-dessus du seuil")
+        images.sort(key=lambda i: i['relevance_score'], reverse=True)
+
+        # 2e tri, par la vision : les sources nomment leurs images « IMG_8531.JPG »
+        # et une image intitulée « Brutalist Design » s'est révélée être un tracteur.
+        # Seul un modèle qui regarde peut trancher (~0,7 s par vignette).
+        recherche = " ; ".join(queries) or (project.description or project.name)
+        set_progress(task.id, "vision", f"Examen des images par l'IA · {min(len(images), 24)}")
+        images = await score_images_with_vision(images[:32], recherche)
+        images.sort(key=lambda i: i.get('relevance_score', 0), reverse=True)
+        images = [img for img in images if img.get('relevance_score', 0) >= 55.0][:24]
+        logger.info(f"🖼 Pertinence : {len(images)}/{total_found} références retenues")
 
         for img in images:
             self.db.add(VeilleResult(
                 topic_id=topic.id,
                 task_id=task.id,
                 result_type=VeilleResultType.VISUAL_REFERENCE,
-                title=img.get('title', 'Sans titre')[:500],
+                # « IMG_8531.JPG » ne dit rien : préférer ce que le modèle a vu
+                title=(img['vision_description']
+                       if img.get('vision_description') and titre_illisible(img.get('title', ''))
+                       else img.get('title', 'Sans titre'))[:500],
                 url=img.get('url'),
                 description=img.get('description', ''),
+                ai_summary=img.get('vision_description'),
                 image_url=img.get('image_url'),
                 thumbnail_url=img.get('thumbnail_url'),
                 license=img.get('license'),

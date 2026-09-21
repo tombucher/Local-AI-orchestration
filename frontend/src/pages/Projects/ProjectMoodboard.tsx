@@ -24,6 +24,7 @@ export const ProjectMoodboard = () => {
   const [items, setItems] = useState<VeilleResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [lightbox, setLightbox] = useState<VeilleResult | null>(null);
+  const [charges, setCharges] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     if (!id) return;
@@ -67,7 +68,7 @@ export const ProjectMoodboard = () => {
       <div className="flex">
         <Sidebar />
 
-        <main className="flex-1 p-6 lg:p-10">
+        <main className="flex-1 min-w-0 p-6 lg:p-10">
           <header className="mb-8">
             <Link
               to={`/projects/${id}`}
@@ -103,24 +104,38 @@ export const ProjectMoodboard = () => {
               }}
             />
           ) : (
-            <div className="columns-2 md:columns-3 xl:columns-4 gap-4 [column-fill:_balance]">
+            <div className="columns-2 md:columns-3 xl:columns-4 2xl:columns-5 gap-4 [column-fill:_balance] max-w-[1600px]">
               {ordered.map((item) => (
                 <figure
                   key={item.id}
-                  className={`group relative mb-4 break-inside-avoid border bg-paper-card cursor-zoom-in
+                  className={`group relative mb-4 break-inside-avoid border bg-paper-card cursor-zoom-in overflow-hidden
                     ${item.status === VeilleResultStatus.SAVED ? 'border-highlight border-2' : 'border-ink-line'}`}
                   onClick={() => setLightbox(item)}
                 >
-                  <img
-                    src={item.thumbnail_url || item.image_url || ''}
-                    alt={item.title}
-                    loading="lazy"
-                    referrerPolicy="no-referrer"
-                    className="w-full block"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).closest('figure')!.style.display = 'none';
-                    }}
-                  />
+                  {/* Réserve visuelle le temps du chargement : sans elle, la vignette
+                      n'est qu'une bande de légende vide et la grille paraît cassée.
+                      L'image reste positionnée par-dessus plutôt que masquée : une
+                      image en display:none n'est JAMAIS chargée en loading="lazy",
+                      puisqu'elle n'entre jamais dans le viewport. */}
+                  <div className="relative">
+                    {!charges.has(item.id) && (
+                      <div className="w-full aspect-[4/3] bg-paper-warm animate-pulse" />
+                    )}
+                    <img
+                      src={item.thumbnail_url || item.image_url || ''}
+                      alt={item.title}
+                      loading="lazy"
+                      referrerPolicy="no-referrer"
+                      className={`w-full block transition-opacity duration-300 ${
+                        charges.has(item.id) ? 'opacity-100' : 'absolute inset-0 h-full opacity-0'
+                      }`}
+                      onLoad={() => setCharges((prev) => new Set(prev).add(item.id))}
+                      onError={(e) => {
+                        // Source morte : masquer plutôt que laisser un cadre vide
+                        (e.target as HTMLImageElement).closest('figure')!.style.display = 'none';
+                      }}
+                    />
+                  </div>
                   {/* Actions au survol */}
                   <div
                     className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity"

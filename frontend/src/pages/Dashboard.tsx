@@ -113,7 +113,7 @@ export const Dashboard = () => {
       <div className="flex">
         <Sidebar />
 
-        <main className="flex-1 p-6 lg:p-10 max-w-6xl">
+        <main className="flex-1 min-w-0 p-6 lg:p-10 max-w-6xl">
           {/* ===== Masthead ===== */}
           <header className="mb-8 animate-fade-up">
             <div className="flex items-baseline justify-between gap-4 flex-wrap">

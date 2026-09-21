@@ -10,7 +10,7 @@ Outil personnel de pilotage de projets créatifs (art numérique + tech) assist�
 
 **Pilotage** — idéation par dialogue (streaming), analyse IA en tâches avec dépendances, chemin critique + frise Gantt, score de maturité, chrono par tâche.
 
-**Action** — génération de code (revue, édition inline, regénération avec instructions), génération de documents, veille par scope (actualités, tech, culturelle, financements, académique, visuelle) récurrente ou one-shot, alimentée par DuckDuckGo et des flux RSS curatés avec anti-doublon, rapport radar avec affinage, appels à projets avec extraction des deadlines, moodboard d'images libres.
+**Action** — génération de code (revue, édition inline, regénération avec instructions), génération de documents, veille par scope (actualités, tech, culturelle, financements, académique, visuelle) récurrente ou one-shot, alimentée par DuckDuckGo et des flux RSS curatés avec anti-doublon, rapport radar avec affinage, appels à projets avec extraction des deadlines, moodboard d'images libres trié par un modèle vision qui regarde et décrit chaque référence.
 
 **Proactivité** — briefing du matin (top 3, prochaine action évidente par projet, échéances), détection de projets qui stagnent avec suggestions de relance, célébrations et séries.
 
@@ -73,7 +73,7 @@ Créer un compte via l'interface, puis choisir tes modèles dans **Paramètres**
 ```bash
 docker compose ps                         # état des services
 docker compose logs -f backend            # logs backend
-./run_tests.sh                            # 121 tests backend
+./run_tests.sh                            # 145 tests backend
 docker compose up -d --build backend      # rebuild après changement de dépendances
 docker compose exec backend alembic upgrade head
 ls backups/                               # sauvegardes Postgres quotidiennes (14 jours)

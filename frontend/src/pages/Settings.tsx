@@ -154,7 +154,7 @@ export const Settings = () => {
         <Sidebar />
 
         {/* Main Content */}
-        <main className="flex-1 p-6 lg:p-8">
+        <main className="flex-1 min-w-0 p-6 lg:p-8">
           {/* Header */}
           <div className="mb-8">
             <div className="flex items-center gap-3 mb-2">
