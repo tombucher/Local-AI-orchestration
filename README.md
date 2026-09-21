@@ -14,7 +14,7 @@ Outil personnel de pilotage de projets créatifs (art numérique + tech) assist�
 
 **Proactivité** — briefing du matin (top 3, prochaine action évidente par projet, échéances), détection de projets qui stagnent avec suggestions de relance, célébrations et séries.
 
-**Socle** — carnet de projet partagé par toutes les actions, plan de fichiers partagé entre les tâches de code, scheduler APScheduler, retry avec backoff, watchdog, registre de modèles Ollama avec repli automatique, design system éditorial, PWA installable, tests backend, sauvegardes Postgres quotidiennes.
+**Socle** — espace documents par projet (texte, code, images) injecté dans les prompts, carnet de projet partagé par toutes les actions, plan de fichiers partagé entre les tâches de code, scheduler APScheduler, retry avec backoff, watchdog, registre de modèles Ollama avec repli automatique, design system éditorial, PWA installable, tests backend, sauvegardes Postgres quotidiennes.
 
 ---
 
@@ -38,8 +38,12 @@ python3 -c "import secrets; print(secrets.token_hex(32))"   # → SECRET_KEY
 ### Démarrer
 ```bash
 docker compose up -d
-docker compose exec backend alembic upgrade head
+docker compose exec backend alembic upgrade head   # obligatoire : le démarrage ne crée plus les tables
 ```
+
+Au démarrage, le backend compare le schéma à la dernière migration et prévient dans les logs
+s'il est en retard (`⚠️ Schéma en retard`). Il ne crée plus aucune table de lui-même : Alembic
+est seul maître du schéma.
 
 | Service | URL |
 |---|---|
@@ -69,7 +73,7 @@ Créer un compte via l'interface, puis choisir tes modèles dans **Paramètres**
 ```bash
 docker compose ps                         # état des services
 docker compose logs -f backend            # logs backend
-./run_tests.sh                            # 94 tests backend
+./run_tests.sh                            # 121 tests backend
 docker compose up -d --build backend      # rebuild après changement de dépendances
 docker compose exec backend alembic upgrade head
 ls backups/                               # sauvegardes Postgres quotidiennes (14 jours)
@@ -152,6 +156,7 @@ Isolation par utilisateur sur tous les endpoints, JWT 7 jours, bcrypt, Postgres 
 | Veille sans résultats | `docker compose ps searxng` ; si l'API renvoie 403, vérifier que `json` figure dans `search.formats` de `searxng/settings.yml` puis `docker compose restart searxng` |
 | Veille textuelle pauvre | Ajoute tes flux dans **Paramètres → Mes flux de veille** ; ils sont vérifiés et étiquetés, et passent avant le catalogue par défaut |
 | Moodboard vide ou très peu d'images | Normal si les sources couvrent mal le sujet : renseigne des mots-clés courts et concrets sur le topic (ils servent directement de requêtes) |
-| Tâche bloquée en GENERATING | Le watchdog la passe en FAILED après 15 min, puis retry |
+| Tâche bloquée en GENERATING | Le watchdog la passe en FAILED après 15 min, puis retry. Attention : toute modification sous `backend/app/` redémarre le serveur et tue les tâches en cours |
+| Moodboard vide | Il se remplit depuis une veille de portée **visuelle** ; une veille d'actualités ne ramène que des liens. Bouton de création dans le moodboard vide |
 | Erreur « attached to a different loop » dans les tests | Relancer `./run_tests.sh` (moteur de test par fonction) |
 | Backend injoignable | `docker compose logs backend`, puis `docker compose restart backend` |

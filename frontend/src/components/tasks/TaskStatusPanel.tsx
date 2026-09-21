@@ -88,20 +88,43 @@ export const TaskStatusPanel = ({
         <div className="flex flex-col gap-4">
           <div className="flex items-center gap-3">
             <Loader size="lg" />
-            <p className="text-warning font-medium">
-              {veille ? 'Veille en cours…' : isTextTask(task.task_type) ? 'Génération du contenu en cours…' : 'Le modèle génère le code…'}
-            </p>
+            <div className="min-w-0">
+              {/* L'étape réelle vient du backend ; le libellé générique n'est
+                  qu'un repli le temps que la première étape remonte. */}
+              <p className="text-warning font-medium">
+                {task.progress?.label
+                  ?? (veille ? 'Veille en cours…'
+                    : isTextTask(task.task_type) ? 'Génération du contenu en cours…'
+                    : 'Le modèle génère le code…')}
+              </p>
+              {task.progress?.total ? (
+                <p className="text-sm text-ink-soft figures">
+                  {task.progress.current} sur {task.progress.total}
+                </p>
+              ) : null}
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <div className="flex-1 bg-highlight/40 h-1.5 overflow-hidden">
-              <div className="bg-warning h-full animate-pulse" style={{ width: '60%' }} />
+              {task.progress?.percent != null ? (
+                <div
+                  className="bg-warning h-full transition-[width] duration-500 ease-out"
+                  style={{ width: `${Math.max(3, task.progress.percent)}%` }}
+                />
+              ) : (
+                // Étape non dénombrable : barre indéterminée plutôt qu'un faux pourcentage
+                <div className="bg-warning h-full w-1/3 animate-indeterminate" />
+              )}
             </div>
             <span className="text-sm text-warning font-mono min-w-[80px] text-right figures">
+              {task.progress?.percent != null ? `${task.progress.percent}% · ` : ''}
               {Math.floor(elapsedTime / 60)}:{(elapsedTime % 60).toString().padStart(2, '0')}
             </span>
           </div>
           <p className="text-sm text-ink-soft">
-            Compte quelques minutes selon le modèle. La page se rafraîchit toute seule.
+            {veille
+              ? "Chaque résultat trouvé passe par le modèle local : compte plusieurs minutes. La page se rafraîchit toute seule."
+              : 'Compte quelques minutes selon le modèle. La page se rafraîchit toute seule.'}
           </p>
           <button onClick={onStopGeneration} disabled={actionLoading} className={btn.danger}>
             <StopCircle className="w-4 h-4" />

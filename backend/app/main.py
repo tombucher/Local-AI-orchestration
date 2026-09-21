@@ -12,7 +12,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from app.core.config import settings
-from app.core.database import init_db
+from app.core.database import check_db_schema
 from app.core.logging import setup_logging, set_correlation_id, get_correlation_id
 from app.api.v1 import auth, projects, tasks, time, orchestrator, settings as settings_router, reports, ideation
 from app.api.errors import register_exception_handlers
@@ -34,11 +34,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     logger.info(f"Environment: {settings.ENV}")
     logger.info(f"Database: {settings.DATABASE_URL}")
 
-    # Initialiser la base de données
-    # Note: En production, utiliser Alembic pour les migrations
-    if settings.ENV == "development":
-        logger.info("Initializing database tables...")
-        await init_db()
+    # Vérifier que le schéma correspond aux migrations.
+    # Ne crée plus les tables : Alembic est seul maître du schéma, sinon les
+    # nouveaux modèles étaient créés avant lui et chaque migration échouait.
+    await check_db_schema()
 
     # Démarrer le scheduler pour l'orchestrateur
     logger.info("Starting task scheduler...")

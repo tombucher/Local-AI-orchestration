@@ -30,6 +30,15 @@ export enum TaskType {
   RESEARCH = 'research',
 }
 
+/** Étape en cours d'une tâche longue, servie par le backend à chaque poll */
+export interface TaskProgress {
+  phase: string;
+  label: string;
+  current: number | null;
+  total: number | null;
+  percent: number | null;
+}
+
 export interface Task {
   id: number;
   project_id: number;
@@ -55,6 +64,8 @@ export interface Task {
   // Veille
   radar_report: RadarReport | null;
   veille_topic_id: number | null;
+  /** Avancement d'une tâche en cours (null si rien ne tourne) */
+  progress: TaskProgress | null;
 }
 
 export interface TaskCreate {

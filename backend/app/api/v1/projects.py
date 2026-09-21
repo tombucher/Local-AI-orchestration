@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Optional, List
 
 logger = logging.getLogger(__name__)
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status, Query
 from sqlalchemy import select, func, and_, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +16,10 @@ from app.api.deps import get_current_user
 from app.models import User, Project, Task, TimeEntry, ProjectStatus, TaskStatus
 from app.schemas import (
     ProjectCreate, ProjectUpdate, ProjectResponse, ProjectStats, ProjectList
+)
+from app.models.project_document import DocumentKind, ProjectDocument
+from app.schemas.project_document import (
+    DocumentDetail, DocumentResponse, DocumentTextCreate, DocumentUpdate,
 )
 from app.schemas.project import (
     TaskPreview, ProjectFinalizationPreview, PreviewFinalizationRequest,
@@ -1140,3 +1144,233 @@ async def get_maturity_analysis(
         'criteria_analysis': criteria_analysis,
         'improvement_suggestions': improvement_suggestions
     }
+
+
+# ════════════════════════════════════════════════════════════
+# Espace documents du projet
+# Notes, extraits de code et images de référence que l'utilisateur dépose pour
+# que l'orchestrateur en tienne compte. Injectés dans les prompts selon la tâche,
+# avec un budget de caractères (voir services/project_documents.py).
+# ════════════════════════════════════════════════════════════
+
+# Un modèle local ne digère pas un fichier de plusieurs mégaoctets
+MAX_TEXT_BYTES = 512 * 1024        # 512 Ko de texte
+MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5 Mo par image
+
+TEXT_EXTENSIONS = {
+    'txt', 'md', 'markdown', 'rst', 'csv', 'tsv', 'json', 'yaml', 'yml', 'toml',
+    'ini', 'cfg', 'log', 'srt', 'vtt',
+}
+CODE_EXTENSIONS = {
+    'py', 'js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'html', 'htm', 'css', 'scss',
+    'sass', 'sh', 'bash', 'zsh', 'sql', 'rs', 'go', 'java', 'rb', 'php', 'c',
+    'cpp', 'h', 'hpp', 'swift', 'kt', 'vue', 'svelte', 'r', 'lua', 'pde',
+}
+IMAGE_MIMES = {'image/png', 'image/jpeg', 'image/webp', 'image/gif'}
+
+
+def _excerpt(document: ProjectDocument) -> Optional[str]:
+    if document.is_image or not document.content:
+        return None
+    texte = document.content.strip().replace('\n', ' ')
+    return texte[:180] + ('…' if len(texte) > 180 else '')
+
+
+def _to_response(document: ProjectDocument) -> DocumentResponse:
+    data = DocumentResponse.model_validate(document)
+    data.excerpt = _excerpt(document)
+    data.has_image = document.is_image
+    return data
+
+
+async def _own_project(db: AsyncSession, project_id: int, user_id: int) -> Project:
+    result = await db.execute(
+        select(Project).where(Project.id == project_id, Project.user_id == user_id)
+    )
+    project = result.scalars().first()
+    if not project:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Projet introuvable")
+    return project
+
+
+async def _own_document(db: AsyncSession, project_id: int, document_id: int, user_id: int) -> ProjectDocument:
+    await _own_project(db, project_id, user_id)
+    result = await db.execute(
+        select(ProjectDocument).where(
+            ProjectDocument.id == document_id, ProjectDocument.project_id == project_id
+        )
+    )
+    document = result.scalars().first()
+    if not document:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document introuvable")
+    return document
+
+
+@router.get("/{project_id}/documents", response_model=List[DocumentResponse])
+async def list_project_documents(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Documents du projet, les plus récents d'abord."""
+    await _own_project(db, project_id, current_user.id)
+    result = await db.execute(
+        select(ProjectDocument)
+        .where(ProjectDocument.project_id == project_id)
+        .order_by(ProjectDocument.created_at.desc())
+    )
+    return [_to_response(d) for d in result.scalars().all()]
+
+
+@router.post("/{project_id}/documents/text", response_model=DocumentResponse,
+             status_code=status.HTTP_201_CREATED)
+async def add_text_document(
+    project_id: int,
+    payload: DocumentTextCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Ajoute une note ou un extrait de code collé directement."""
+    await _own_project(db, project_id, current_user.id)
+    taille = len(payload.content.encode("utf-8"))
+    if taille > MAX_TEXT_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Texte trop long ({taille // 1024} Ko) — maximum {MAX_TEXT_BYTES // 1024} Ko",
+        )
+    document = ProjectDocument(
+        project_id=project_id,
+        name=payload.name.strip(),
+        kind=payload.kind,
+        mime_type="text/markdown" if payload.kind == DocumentKind.TEXT else "text/plain",
+        content=payload.content,
+        size_bytes=taille,
+        note=payload.note,
+    )
+    db.add(document)
+    await db.commit()
+    await db.refresh(document)
+    return _to_response(document)
+
+
+@router.post("/{project_id}/documents/upload", response_model=DocumentResponse,
+             status_code=status.HTTP_201_CREATED)
+async def upload_project_document(
+    project_id: int,
+    file: UploadFile = File(...),
+    note: Optional[str] = Form(None),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Téléverse un fichier texte, un fichier de code ou une image.
+
+    Les PDF sont refusés volontairement : l'extraction coûte trop cher en local.
+    """
+    await _own_project(db, project_id, current_user.id)
+    nom = (file.filename or "document").strip()
+    extension = nom.rsplit('.', 1)[-1].lower() if '.' in nom else ''
+    mime = (file.content_type or '').lower()
+    octets = await file.read()
+
+    if mime in IMAGE_MIMES or extension in {'png', 'jpg', 'jpeg', 'webp', 'gif'}:
+        if len(octets) > MAX_IMAGE_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Image trop lourde ({len(octets) // 1024 // 1024} Mo) — maximum 5 Mo",
+            )
+        document = ProjectDocument(
+            project_id=project_id, name=nom, kind=DocumentKind.IMAGE,
+            mime_type=mime or f"image/{extension}", binary=octets,
+            size_bytes=len(octets), note=note,
+        )
+    elif extension in TEXT_EXTENSIONS or extension in CODE_EXTENSIONS or mime.startswith("text/"):
+        if len(octets) > MAX_TEXT_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Fichier trop long ({len(octets) // 1024} Ko) — maximum {MAX_TEXT_BYTES // 1024} Ko",
+            )
+        try:
+            texte = octets.decode("utf-8")
+        except UnicodeDecodeError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Fichier illisible : seul l'UTF-8 est accepté pour le texte",
+            )
+        document = ProjectDocument(
+            project_id=project_id, name=nom,
+            kind=DocumentKind.CODE if extension in CODE_EXTENSIONS else DocumentKind.TEXT,
+            mime_type=mime or "text/plain", content=texte,
+            size_bytes=len(octets), note=note,
+        )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(f"Format non pris en charge ({extension or mime or 'inconnu'}). "
+                    "Texte, code et images uniquement — les PDF ne sont pas traités."),
+        )
+
+    db.add(document)
+    await db.commit()
+    await db.refresh(document)
+    return _to_response(document)
+
+
+@router.get("/{project_id}/documents/{document_id}", response_model=DocumentDetail)
+async def get_project_document(
+    project_id: int,
+    document_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Contenu intégral d'un document texte."""
+    document = await _own_document(db, project_id, document_id, current_user.id)
+    detail = DocumentDetail.model_validate(document)
+    detail.excerpt = _excerpt(document)
+    detail.has_image = document.is_image
+    return detail
+
+
+@router.get("/{project_id}/documents/{document_id}/raw")
+async def get_project_document_raw(
+    project_id: int,
+    document_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Octets bruts d'une image, pour l'affichage dans l'interface."""
+    document = await _own_document(db, project_id, document_id, current_user.id)
+    if not document.is_image or not document.binary:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ce document n'est pas une image")
+    return Response(content=document.binary, media_type=document.mime_type)
+
+
+@router.patch("/{project_id}/documents/{document_id}", response_model=DocumentResponse)
+async def update_project_document(
+    project_id: int,
+    document_id: int,
+    payload: DocumentUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Renomme, annote, active ou désactive un document."""
+    document = await _own_document(db, project_id, document_id, current_user.id)
+    for champ, valeur in payload.model_dump(exclude_unset=True).items():
+        if champ == "content" and valeur is not None:
+            document.size_bytes = len(valeur.encode("utf-8"))
+        setattr(document, champ, valeur)
+    await db.commit()
+    await db.refresh(document)
+    return _to_response(document)
+
+
+@router.delete("/{project_id}/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_project_document(
+    project_id: int,
+    document_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retire un document du projet."""
+    document = await _own_document(db, project_id, document_id, current_user.id)
+    await db.delete(document)
+    await db.commit()

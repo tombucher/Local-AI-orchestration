@@ -40,6 +40,9 @@ export const TaskForm = () => {
 
   const isEditMode = Boolean(id);
   const preselectedProjectId = searchParams.get('project_id');
+  // Permet d'arriver depuis le Moodboard avec une veille visuelle déjà configurée
+  const preselectedType = searchParams.get('task_type');
+  const preselectedScope = searchParams.get('veille_scope');
 
   const {
     register,
@@ -53,12 +56,12 @@ export const TaskForm = () => {
       project_id: preselectedProjectId ? parseInt(preselectedProjectId) : undefined,
       title: '',
       description: '',
-      task_type: TaskType.CODE_GENERATION,
+      task_type: (preselectedType as TaskType) || TaskType.CODE_GENERATION,
       priority: TaskPriority.P3,
       llm_prompt: '',
       keywords: '',
       frequency: 'weekly',
-      veille_scope: 'news',
+      veille_scope: (preselectedScope as 'news' | 'tech' | 'cultural' | 'funding' | 'academic' | 'visual') || 'news',
       excluded_keywords: '',
     },
   });

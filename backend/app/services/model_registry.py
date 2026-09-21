@@ -116,20 +116,42 @@ def resolve_model(preferred: Optional[str], purpose: str = "") -> str:
     return fallback
 
 
-def supports_thinking(model: str) -> bool:
-    """True si le modèle expose la capacité 'thinking' (qwen3.x, deepseek-r1, gpt-oss…).
-    Lu via l'API /show et mis en cache ; repli sur une heuristique par nom."""
+def _capabilities(model: str) -> set:
+    """Capacités annoncées par Ollama pour ce modèle, mises en cache.
+
+    Renvoie un ensemble vide si /show échoue — les appelants retombent alors sur
+    leur propre heuristique plutôt que de supposer une capacité absente.
+    """
     if model in _caps_cache:
-        return "thinking" in _caps_cache[model]
+        return _caps_cache[model]
     try:
         info = _client().show(model)
         caps = set(_field(info, "capabilities") or [])
         _caps_cache[model] = caps
-        return "thinking" in caps
+        return caps
     except Exception as e:
-        logger.debug(f"show({model}) failed: {e} — heuristique par nom")
-        lowered = model.lower()
-        return any(tag in lowered for tag in ("qwen3", "deepseek-r1", "gpt-oss"))
+        logger.debug(f"show({model}) failed: {e}")
+        return set()
+
+
+def supports_thinking(model: str) -> bool:
+    """True si le modèle expose la capacité 'thinking' (qwen3.x, deepseek-r1, gpt-oss…).
+    Lu via l'API /show et mis en cache ; repli sur une heuristique par nom."""
+    caps = _capabilities(model)
+    if caps:
+        return "thinking" in caps
+    lowered = model.lower()
+    return any(tag in lowered for tag in ("qwen3", "deepseek-r1", "gpt-oss"))
+
+
+def supports_vision(model: str) -> bool:
+    """Le modèle accepte-t-il des images ? (capacité `vision` annoncée par /show)
+
+    qwen3.8 et gemma4 l'annoncent. Inutile d'envoyer des images à un modèle qui
+    ne les lit pas : ce serait du contexte gaspillé, voire une erreur Ollama.
+    En cas d'échec de /show on répond False — ne pas envoyer vaut mieux qu'échouer.
+    """
+    return "vision" in _capabilities(model)
 
 
 def think_kwargs(model: str) -> Dict[str, Any]:

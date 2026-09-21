@@ -1,6 +1,6 @@
 # 🚀 Orchestrateur IA — état du projet
 
-**Dernière mise à jour : 20 septembre 2026**
+**Dernière mise à jour : 21 septembre 2026**
 
 ## 📝 Ce que fait l'outil
 
@@ -28,6 +28,7 @@ Tout tourne en local : FastAPI + PostgreSQL dans Docker, React/Vite, Ollama nati
 - **Détection de stagnation** (7 jours sans activité) → suggestions de relance créables en un clic.
 
 ### Mémoire
+- **Espace documents par projet** (`project_documents`, panneau dans la page projet) : notes, extraits de code et **images** déposés par l'utilisateur. Injectés dans les prompts selon la tâche, avec budget (12 000 car., 6 000 par document) ; au-delà les documents sont seulement cités. Les images ne partent qu'aux modèles annonçant `vision` (qwen3.8 et gemma4 l'annoncent), 3 au maximum. PDF hors périmètre : extraction trop coûteuse en local.
 - **Carnet de projet** (`services/project_memory.py`) assemblé à la demande depuis la base (description, idéation, chantiers en cours, résultats gardés/écartés) et injecté dans toutes les générations de requêtes : veille, veille visuelle, financements. Jamais stocké, donc jamais périmé ; il apprend de ce que tu gardes et de ce que tu jettes.
 - Volumétrie mesurée : le projet le plus fourni tient en ~1 800 tokens pour une fenêtre de 16k–32k — pas de recherche vectorielle nécessaire à ce stade.
 
@@ -35,6 +36,9 @@ Tout tourne en local : FastAPI + PostgreSQL dans Docker, React/Vite, Ollama nati
 - **Bibliothèque de flux personnelle** (`rss_feeds`, API `/settings/feeds`, UI dans Paramètres) : on ajoute une URL, elle est **vérifiée immédiatement** (un flux mort est refusé avec son motif) et ses **thèmes sont déduits** du titre, des catégories déclarées et des mots récurrents des entrées. À correspondance égale, tes flux passent devant le catalogue intégré.
 - Bouton « re-vérifier » par flux : les sources meurent sans prévenir (deux des flux écolo de départ renvoyaient 404 depuis des mois).
 - Garde-fou anti-SSRF à l'ajout : uniquement du http(s) public.
+
+### Suivi d'exécution
+- **Avancement en direct** (`services/task_progress.py`, champ `progress` de `GET /tasks/{id}`) : étape courante et compteur *n/N* pendant l'analyse. Registre en mémoire — la phase d'analyse tourne dans un savepoint, y écrire depuis une autre session bloquerait sur le verrou de la ligne `tasks`. S'efface après un redémarrage, ce qui signale une tâche morte au lieu de figer un faux avancement.
 
 ### Recherche web
 - **SearXNG** (`docker compose up -d searxng`, `SEARXNG_URL`) est le backend prioritaire : métamoteur local, ni clé ni quota, lié à `127.0.0.1:8888`. Config dans `searxng/settings.yml` — **`json` doit figurer dans `search.formats`**, sinon l'API répond 403 (le backend le dit explicitement dans les logs).
@@ -45,7 +49,7 @@ Tout tourne en local : FastAPI + PostgreSQL dans Docker, React/Vite, Ollama nati
 - Scheduler (queue toutes les 2 min, veilles toutes les 15 min, watchdog 5 min, rapports 8h), retry avec backoff.
 - **Registre de modèles** : si un modèle Ollama configuré n'existe plus, repli automatique sur un modèle installé ; thinking désactivé par détection de capacités.
 - Design system « journal d'atelier » (papier/encre/vermillon, Fraunces + Archivo), PWA installable.
-- **94 tests** backend (`./run_tests.sh`), sauvegardes Postgres quotidiennes (`./backups/`), rotation des logs.
+- **121 tests** backend (`./run_tests.sh`), sauvegardes Postgres quotidiennes (`./backups/`), rotation des logs.
 
 ## 🔒 Sécurité (audit du 19/09/2026)
 - Isolation par utilisateur sur tous les endpoints ; 401 sans jeton, 404 sur les données d'autrui.
@@ -71,6 +75,11 @@ Les modèles changent souvent : ne jamais coder un nom en dur, passer par `backe
 - Veille visuelle aberrante : le projet n'était jamais lu (requête littérale « veille visuelle »), les requêtes étaient trop longues pour des APIs à mots-clés (« glitch » → 20 images, « glitch art brutalist aesthetic » → 0), et aucun filtrage ne s'appliquait → `services/project_memory.py` + notation par couverture de requête.
 - Flux RSS CreativeApplications mort (« RSS Feed Inactive ») → remplacé par Hyperallergic et Dezeen ; Openverse plafonné à 20 (401 au-delà) ; concurrence réseau bridée (DNS du conteneur saturé).
 - Are.na : `/v2/search/blocks` renvoie 403 pour tout le monde → on passe par `/v2/search/channels` puis le contenu des collections, ce qui vaut mieux (curation humaine).
+- **Streaming Ollama bloquant** : le client *synchrone* était itéré dans une coroutine, gelant toute l'API pendant chaque génération (mesuré : zéro tick de la boucle d'événements en 7,4 s ; health check en échec). Passage à `AsyncClient` + `async for` ; `document_generator` déporté en thread.
+- Page projet qui remontait en haut à chaque modification du Gantt : `fetchProjectStats` passait `loading` à `true` et le loader plein écran démontait la page. Il ne s'affiche plus qu'au premier chargement.
+- Tâches affichées « en vrac » : le tri topologique du chemin critique n'était pas utilisé. Rang numéroté, badge « À faire maintenant » et marqueur « Bloquée » avec ses dépendances.
+- `create_all` au démarrage créait les tables des nouveaux modèles avant Alembic : chaque migration échouait ensuite sur « table already exists » et le schéma pouvait diverger en silence. Le démarrage **vérifie** désormais la révision et prévient si elle est en retard, sans rien créer.
+- Rechargement uvicorn déclenché par tout fichier sous `backend/` (y compris les tests) : il tuait les tâches de fond en cours. Surveillance restreinte à `app/`.
 - Flux d'actualité obsolètes corrigés : Yale E360 → `/feed.xml`, The Ecologist → `/rss` (les anciennes URL renvoyaient 404) ; Prosthetic Knowledge écarté (blog retiré).
 - Recherche de financements qui renvoyait des datasets data.gouv au lieu d'appels à projets.
 - `GET /tasks/{id}/logs` en 500 ; CORS hardcodé ; ~30 erreurs TypeScript qui cassaient `npm run build`.

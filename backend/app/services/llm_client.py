@@ -39,6 +39,11 @@ class OllamaClient:
         self.host = host
         # Configurer le client avec un timeout de 300 secondes (5 minutes)
         self.client = ollama.Client(host=host, timeout=300.0)
+        # Client asynchrone pour le streaming : itérer le client synchrone dans une
+        # coroutine bloquait la boucle d'événements pendant TOUTE la génération —
+        # plusieurs minutes durant lesquelles l'API ne répondait plus à rien, pas
+        # même au health check ni au suivi d'avancement.
+        self.async_client = ollama.AsyncClient(host=host, timeout=300.0)
         logger.info(f"✅ Ollama client initialized: {host} (timeout: 300s)")
 
     async def generate_code(
@@ -47,6 +52,8 @@ class OllamaClient:
         model_override: Optional[str] = None,
         user_settings: Optional[dict] = None,
         workspace_context: Optional[str] = None,
+        document_context: Optional[str] = None,
+        images: Optional[list] = None,
     ) -> str:
         """
         Génère du code avec streaming pour détecter la fin
@@ -56,6 +63,8 @@ class OllamaClient:
             model_override: Modèle spécifique à utiliser (sinon utilise config par défaut)
             user_settings: Paramètres utilisateur avec préférences de modèles
             workspace_context: Plan de fichiers et code des autres tâches du projet
+            document_context: Documents de référence déposés par l'utilisateur
+            images: Images de référence en base64 (modèles dotés de vision uniquement)
 
         Returns:
             Code généré (str)
@@ -65,7 +74,7 @@ class OllamaClient:
         """
         model = self._select_model(task, model_override, user_settings)
         is_qwen3 = self._is_qwen3_model(model)
-        prompt = self._build_prompt(task, is_qwen3, workspace_context)
+        prompt = self._build_prompt(task, is_qwen3, workspace_context, document_context)
         system_prompt = self._build_system_prompt(is_qwen3)
         options = self._get_llm_options(is_qwen3)
 
@@ -79,11 +88,17 @@ class OllamaClient:
             first_token_time = None
             chunk_count = 0
 
-            stream = self.client.chat(
+            # Les images vont sur le message utilisateur ; Ollama les attend en base64
+            user_message = {'role': 'user', 'content': prompt}
+            if images:
+                user_message['images'] = images
+                logger.info(f"🖼 [TASK-{task.id}] {len(images)} image(s) de référence jointes")
+
+            stream = await self.async_client.chat(
                 model=model,
                 messages=[
                     {'role': 'system', 'content': system_prompt},
-                    {'role': 'user', 'content': prompt}
+                    user_message,
                 ],
                 stream=True,
                 options=options,
@@ -93,7 +108,7 @@ class OllamaClient:
             )
 
             # Collecter les chunks en streaming
-            for chunk in stream:
+            async for chunk in stream:
                 chunk_count += 1
 
                 logger.debug(f"[TASK-{task.id}] Chunk {chunk_count}: {chunk}")
@@ -217,7 +232,7 @@ class OllamaClient:
                 logger.info(f"🧠 [TASK-{task.id}] Passe 1/2 — thinking libre...")
                 thinking_buffer = ""
 
-                stream1 = self.client.chat(
+                stream1 = await self.async_client.chat(
                     model=model,
                     messages=[
                         {
@@ -234,7 +249,7 @@ class OllamaClient:
                     think=True,
                 )
 
-                for chunk in stream1:
+                async for chunk in stream1:
                     if 'message' in chunk:
                         thinking_buffer += chunk['message'].get('thinking') or ''
                         # Limite le thinking à 5000 chars pour éviter les boucles
@@ -263,7 +278,7 @@ class OllamaClient:
                 full_response = ""
                 chunk_count = 0
 
-                stream2 = self.client.chat(
+                stream2 = await self.async_client.chat(
                     model=model,
                     messages=[
                         {'role': 'system', 'content': system_clean},
@@ -274,7 +289,7 @@ class OllamaClient:
                     think=False,
                 )
 
-                for chunk in stream2:
+                async for chunk in stream2:
                     chunk_count += 1
                     if 'message' in chunk:
                         content = chunk['message'].get('content') or ''
@@ -305,7 +320,7 @@ class OllamaClient:
                 first_token_time = None
                 chunk_count = 0
 
-                stream = self.client.chat(
+                stream = await self.async_client.chat(
                     model=model,
                     messages=[
                         {'role': 'system', 'content': system_prompt},
@@ -316,7 +331,7 @@ class OllamaClient:
                     **think_kwargs(model),
                 )
 
-                for chunk in stream:
+                async for chunk in stream:
                     chunk_count += 1
 
                     if first_token_time is None:
@@ -430,7 +445,8 @@ class OllamaClient:
             'stop': ['</s>'],
         }
 
-    def _build_prompt(self, task: Task, is_qwen3: bool = False, workspace_context: Optional[str] = None) -> str:
+    def _build_prompt(self, task: Task, is_qwen3: bool = False, workspace_context: Optional[str] = None,
+                      document_context: Optional[str] = None) -> str:
         """Construit le prompt adapté au modèle, incluant le contexte d'atelier et le feedback"""
         # Section feedback si validation_notes existe (ajustement demandé)
         feedback_section = ""
@@ -444,6 +460,10 @@ class OllamaClient:
         # Contexte d'atelier : plan de fichiers du projet + code déjà produit par
         # les autres tâches. C'est ce qui permet au HTML de référencer le bon CSS.
         workspace_section = f"{workspace_context}\n\n---\n\n" if workspace_context else ""
+        # Les documents de l'utilisateur passent AVANT le plan de fichiers : ils
+        # font autorité sur tout le reste.
+        if document_context:
+            workspace_section = f"{document_context}\n\n---\n\n{workspace_section}"
 
         if is_qwen3:
             return f"""{workspace_section}Task: {task.title}
