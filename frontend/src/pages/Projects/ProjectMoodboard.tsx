@@ -5,18 +5,106 @@
  * - Épingler / écarter (statuts SAVED / DISMISSED)
  */
 
-import { useEffect, useState, useCallback } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Bookmark, X, ExternalLink, Image } from 'lucide-react';
+import { ArrowLeft, Bookmark, X, ExternalLink, Image, ImageOff, Plus, Upload } from 'lucide-react';
 import { Navbar } from '../../components/Layout/Navbar';
 import { Sidebar } from '../../components/Layout/Sidebar';
 import { EmptyState } from '../../components/EmptyState';
 import { api } from '../../services/api';
+import { documentsApi } from '../../services/documentsApi';
+import toast from 'react-hot-toast';
 import { tasksService } from '../../services/tasks';
 import type { VeilleResult } from '../../types/task.types';
 import { TaskType } from '../../types/task.types';
 import { VeilleResultStatus } from '../../types/task.types';
 import Loader from '../../components/ui/Loader';
+
+/**
+ * Vignette du moodboard.
+ *
+ * Deux origines cohabitent : les images collectées par la veille (URL externes,
+ * affichables directement) et celles déposées dans l'espace documents (servies
+ * par un endpoint authentifié, qu'une balise <img> ne peut pas appeler — il faut
+ * passer par axios puis fabriquer un blob: URL).
+ */
+const ImageReference = ({
+  item, charge, onCharge,
+}: {
+  item: VeilleResult;
+  charge: boolean;
+  onCharge: () => void;
+}) => {
+  const source = item.thumbnail_url || item.image_url || '';
+  const authentifiee = source.startsWith('/api/');
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [enEchec, setEnEchec] = useState(false);
+  // Une référence collectée par la veille peut disparaître sans bruit : c'est du
+  // bruit en moins. Une image que l'utilisateur a ajoutée lui-même, non — la voir
+  // s'évaporer laisserait croire que l'ajout a échoué.
+  const choisieParLUtilisateur =
+    item.source_kind === 'document' || item.source_platform === 'Ajout manuel';
+
+  useEffect(() => {
+    if (!authentifiee) return;
+    let objectUrl: string | null = null;
+    let annule = false;
+    api
+      .get(source.replace('/api/v1', ''), { responseType: 'blob', silentError: true })
+      .then((r) => {
+        objectUrl = URL.createObjectURL(r.data as Blob);
+        if (annule) URL.revokeObjectURL(objectUrl);
+        else {
+          setBlobUrl(objectUrl);
+          onCharge();
+        }
+      })
+      .catch(() => {});
+    return () => {
+      annule = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [source, authentifiee]);
+
+  const src = authentifiee ? blobUrl : source;
+  const pret = authentifiee ? Boolean(blobUrl) : charge;
+
+  if (enEchec) {
+    return (
+      <div className="w-full aspect-[4/3] bg-paper-warm border-b border-ink-line flex flex-col items-center justify-center gap-2 px-3 text-center">
+        <ImageOff className="w-5 h-5 text-ink-faint" />
+        <p className="text-[11px] text-ink-faint leading-snug">
+          Image introuvable à cette adresse
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative">
+      {!pret && <div className="w-full aspect-[4/3] bg-paper-warm animate-pulse" />}
+      {src && (
+        <img
+          src={src}
+          alt={item.title}
+          loading={authentifiee ? undefined : 'lazy'}
+          referrerPolicy="no-referrer"
+          className={`w-full block transition-opacity duration-300 ${
+            pret ? 'opacity-100' : 'absolute inset-0 h-full opacity-0'
+          }`}
+          onLoad={onCharge}
+          onError={(e) => {
+            if (choisieParLUtilisateur) {
+              setEnEchec(true);   // garder la vignette, signaler le problème
+            } else {
+              (e.target as HTMLImageElement).closest('figure')!.style.display = 'none';
+            }
+          }}
+        />
+      )}
+    </div>
+  );
+};
 
 export const ProjectMoodboard = () => {
   const { id } = useParams<{ id: string }>();
@@ -25,6 +113,11 @@ export const ProjectMoodboard = () => {
   const [loading, setLoading] = useState(true);
   const [lightbox, setLightbox] = useState<VeilleResult | null>(null);
   const [charges, setCharges] = useState<Set<number>>(new Set());
+  const [ajoutOuvert, setAjoutOuvert] = useState(false);
+  const [urlImage, setUrlImage] = useState('');
+  const [titreImage, setTitreImage] = useState('');
+  const [ajoutEnCours, setAjoutEnCours] = useState(false);
+  const inputFichier = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -34,6 +127,51 @@ export const ProjectMoodboard = () => {
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [id]);
+
+  const recharger = useCallback(async () => {
+    if (!id) return;
+    const r = await api.get<{ items: VeilleResult[]; total: number }>(
+      `/projects/${id}/visual-references`,
+    );
+    setItems(r.data.items);
+  }, [id]);
+
+  /** Épingle une image trouvée ailleurs, à partir de son adresse */
+  const ajouterParUrl = async () => {
+    if (!urlImage.trim() || !id) return;
+    setAjoutEnCours(true);
+    try {
+      await api.post(`/projects/${id}/visual-references`, {
+        url: urlImage.trim(),
+        title: titreImage.trim() || undefined,
+      });
+      setUrlImage('');
+      setTitreImage('');
+      await recharger();
+      toast.success('Image épinglée au moodboard');
+    } catch {
+      // Motif déjà affiché par l'intercepteur API
+    } finally {
+      setAjoutEnCours(false);
+    }
+  };
+
+  /** Les fichiers passent par l'espace documents : ils servent aussi de contexte à l'IA */
+  const televerser = async (fichiers: FileList | null) => {
+    if (!fichiers?.length || !id) return;
+    setAjoutEnCours(true);
+    for (const fichier of Array.from(fichiers)) {
+      try {
+        await documentsApi.upload(parseInt(id), fichier);
+        toast.success(`« ${fichier.name} » ajouté`);
+      } catch {
+        /* déjà toasté */
+      }
+    }
+    await recharger();
+    setAjoutEnCours(false);
+    if (inputFichier.current) inputFichier.current.value = '';
+  };
 
   const setStatus = useCallback(async (result: VeilleResult, status: VeilleResultStatus) => {
     try {
@@ -78,12 +216,71 @@ export const ProjectMoodboard = () => {
             </Link>
             <div className="flex items-baseline justify-between gap-4 flex-wrap">
               <h1 className="font-display text-4xl text-ink tracking-tight">Moodboard</h1>
-              <p className="text-xs text-ink-faint figures">
-                {items.length} référence{items.length > 1 ? 's' : ''}
-                {pinned.length > 0 && ` · ${pinned.length} épinglée${pinned.length > 1 ? 's' : ''}`}
-              </p>
+              <div className="flex items-center gap-3">
+                <p className="text-xs text-ink-faint figures">
+                  {items.length} référence{items.length > 1 ? 's' : ''}
+                  {pinned.length > 0 && ` · ${pinned.length} épinglée${pinned.length > 1 ? 's' : ''}`}
+                </p>
+                <button
+                  onClick={() => setAjoutOuvert((v) => !v)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-ink-line text-ink hover:border-accent hover:text-accent transition-colors text-xs font-medium"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Ajouter une image
+                </button>
+              </div>
             </div>
             <div className="rule-strong mt-4" />
+
+            {/* Ajout manuel : une veille visuelle remplit le moodboard toute
+                seule, ceci sert aux trouvailles faites ailleurs. */}
+            {ajoutOuvert && (
+              <div className="mt-4 p-4 border border-ink-line bg-paper-card space-y-3">
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    value={urlImage}
+                    onChange={(e) => setUrlImage(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && ajouterParUrl()}
+                    placeholder="https://… (adresse directe de l'image)"
+                    className="flex-1 px-3 py-2 bg-paper border border-ink-line text-ink placeholder:text-ink-faint focus:outline-none focus:border-accent font-mono text-sm"
+                  />
+                  <input
+                    value={titreImage}
+                    onChange={(e) => setTitreImage(e.target.value)}
+                    placeholder="Intitulé (facultatif)"
+                    className="sm:w-56 px-3 py-2 bg-paper border border-ink-line text-ink placeholder:text-ink-faint focus:outline-none focus:border-accent text-sm"
+                  />
+                  <button
+                    onClick={ajouterParUrl}
+                    disabled={!urlImage.trim() || ajoutEnCours}
+                    className="px-4 py-2 bg-accent text-paper hover:opacity-90 disabled:opacity-40 transition-opacity text-sm font-medium whitespace-nowrap"
+                  >
+                    {ajoutEnCours ? 'Ajout…' : 'Épingler'}
+                  </button>
+                </div>
+                <div className="flex items-center gap-3">
+                  <input
+                    ref={inputFichier}
+                    type="file"
+                    multiple
+                    accept=".png,.jpg,.jpeg,.webp,.gif"
+                    className="hidden"
+                    onChange={(e) => televerser(e.target.files)}
+                  />
+                  <button
+                    onClick={() => inputFichier.current?.click()}
+                    disabled={ajoutEnCours}
+                    className="inline-flex items-center gap-2 px-3 py-1.5 border border-ink-line text-ink-soft hover:border-accent hover:text-accent disabled:opacity-40 transition-colors text-sm"
+                  >
+                    <Upload className="w-4 h-4" />
+                    …ou depuis un fichier
+                  </button>
+                  <span className="text-xs text-ink-faint">
+                    Les fichiers rejoignent aussi les documents du projet, donc le contexte de l'IA.
+                  </span>
+                </div>
+              </div>
+            )}
           </header>
 
           {loading ? (
@@ -112,30 +309,11 @@ export const ProjectMoodboard = () => {
                     ${item.status === VeilleResultStatus.SAVED ? 'border-highlight border-2' : 'border-ink-line'}`}
                   onClick={() => setLightbox(item)}
                 >
-                  {/* Réserve visuelle le temps du chargement : sans elle, la vignette
-                      n'est qu'une bande de légende vide et la grille paraît cassée.
-                      L'image reste positionnée par-dessus plutôt que masquée : une
-                      image en display:none n'est JAMAIS chargée en loading="lazy",
-                      puisqu'elle n'entre jamais dans le viewport. */}
-                  <div className="relative">
-                    {!charges.has(item.id) && (
-                      <div className="w-full aspect-[4/3] bg-paper-warm animate-pulse" />
-                    )}
-                    <img
-                      src={item.thumbnail_url || item.image_url || ''}
-                      alt={item.title}
-                      loading="lazy"
-                      referrerPolicy="no-referrer"
-                      className={`w-full block transition-opacity duration-300 ${
-                        charges.has(item.id) ? 'opacity-100' : 'absolute inset-0 h-full opacity-0'
-                      }`}
-                      onLoad={() => setCharges((prev) => new Set(prev).add(item.id))}
-                      onError={(e) => {
-                        // Source morte : masquer plutôt que laisser un cadre vide
-                        (e.target as HTMLImageElement).closest('figure')!.style.display = 'none';
-                      }}
-                    />
-                  </div>
+                  <ImageReference
+                    item={item}
+                    charge={charges.has(item.id)}
+                    onCharge={() => setCharges((prev) => new Set(prev).add(item.id))}
+                  />
                   {/* Actions au survol */}
                   <div
                     className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity"

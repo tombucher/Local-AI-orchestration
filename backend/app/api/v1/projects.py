@@ -20,6 +20,7 @@ from app.schemas import (
 from app.models.project_document import DocumentKind, ProjectDocument
 from app.schemas.project_document import (
     DocumentDetail, DocumentResponse, DocumentTextCreate, DocumentUpdate,
+    VisualReferenceCreate,
 )
 from app.schemas.project import (
     TaskPreview, ProjectFinalizationPreview, PreviewFinalizationRequest,
@@ -544,8 +545,99 @@ async def get_visual_references(
         query = query.where(VeilleResult.status != VeilleResultStatus.DISMISSED)
 
     result = await db.execute(query)
-    items = [VeilleResultResponse.model_validate(r) for r in result.unique().scalars().all()]
+    items = [VeilleResultResponse.model_validate(r).model_dump() for r in result.unique().scalars().all()]
+    for item in items:
+        item["source_kind"] = "veille"
+
+    # Les images déposées dans l'espace documents appartiennent au même projet :
+    # les afficher ailleurs obligerait à chercher ses références à deux endroits.
+    docs = (await db.execute(
+        select(ProjectDocument).where(
+            ProjectDocument.project_id == project_id,
+            ProjectDocument.kind == DocumentKind.IMAGE,
+            ProjectDocument.enabled.is_(True),
+        ).order_by(ProjectDocument.created_at.desc())
+    )).scalars().all()
+
+    for doc in docs:
+        # Chemin d'API : les octets sont servis par un endpoint authentifié,
+        # le frontend les récupère en blob (une balise <img> ne peut pas porter
+        # l'en-tête Authorization).
+        chemin = f"/api/v1/projects/{project_id}/documents/{doc.id}/raw"
+        items.append({
+            "id": -doc.id,  # identifiants négatifs : pas de collision avec les veilles
+            "topic_id": 0,
+            "result_type": VeilleResultType.VISUAL_REFERENCE.value,
+            "title": doc.name,
+            "url": None,
+            "description": doc.note,
+            "image_url": chemin,
+            "thumbnail_url": chemin,
+            "license": "Déposée par toi",
+            "source_platform": "Documents du projet",
+            "relevance_score": 100.0,
+            "status": VeilleResultStatus.SAVED.value,
+            "found_at": doc.created_at,
+            "source_kind": "document",
+        })
+
     return {"items": items, "total": len(items)}
+
+
+@router.post("/{project_id}/visual-references", status_code=status.HTTP_201_CREATED)
+async def add_visual_reference(
+    project_id: int,
+    payload: VisualReferenceCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Épingle une image au moodboard à partir de son URL.
+
+    Une veille visuelle alimente le moodboard toute seule ; ceci sert aux
+    trouvailles faites ailleurs, que rien ne permettait d'y ajouter.
+    """
+    from app.models.veille_result import VeilleResult, VeilleResultType, VeilleResultStatus
+    from app.models.veille_topic import VeilleScope
+    from app.schemas.veille_result import VeilleResultResponse
+
+    await _own_project(db, project_id, current_user.id)
+
+    # Un sujet dédié regroupe les ajouts manuels, sans se mêler aux veilles
+    topic = (await db.execute(
+        select(VeilleTopic).where(
+            VeilleTopic.project_id == project_id,
+            VeilleTopic.scope == VeilleScope.VISUAL,
+            VeilleTopic.name == MANUAL_TOPIC_NAME,
+        )
+    )).scalars().first()
+    if not topic:
+        topic = VeilleTopic(
+            project_id=project_id, name=MANUAL_TOPIC_NAME, scope=VeilleScope.VISUAL,
+            keywords=[], scan_frequency="manual", enabled=False,
+            description="Images ajoutées à la main au moodboard",
+        )
+        db.add(topic)
+        await db.flush()
+
+    reference = VeilleResult(
+        topic_id=topic.id,
+        result_type=VeilleResultType.VISUAL_REFERENCE,
+        title=(payload.title or "Image ajoutée").strip()[:500],
+        url=payload.source_url or payload.url,
+        description=payload.note,
+        image_url=payload.url,
+        thumbnail_url=payload.url,
+        license="Ajoutée par toi — droits à vérifier",
+        source_platform="Ajout manuel",
+        # Choisie délibérément : épinglée d'emblée, et pas de note de pertinence
+        relevance_score=100.0,
+        status=VeilleResultStatus.SAVED,
+    )
+    db.add(reference)
+    await db.commit()
+    await db.refresh(reference)
+    logger.info(f"🖼 Image ajoutée manuellement au moodboard du projet {project_id}")
+    return VeilleResultResponse.model_validate(reference)
 
 
 @router.post("/refine-task", response_model=RefineTaskResponse)
@@ -1154,6 +1246,9 @@ async def get_maturity_analysis(
 # ════════════════════════════════════════════════════════════
 
 # Un modèle local ne digère pas un fichier de plusieurs mégaoctets
+# Sujet de veille fictif qui regroupe les images ajoutées à la main
+MANUAL_TOPIC_NAME = "Ajouts manuels"
+
 MAX_TEXT_BYTES = 512 * 1024        # 512 Ko de texte
 MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5 Mo par image
 

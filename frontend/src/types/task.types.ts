@@ -132,6 +132,8 @@ export enum VeilleResultStatus {
 }
 
 export interface VeilleResult {
+  /** « veille » (collectée) ou « document » (déposée dans l'espace documents) */
+  source_kind?: 'veille' | 'document';
   id: number;
   topic_id: number;
   result_type: VeilleResultType;

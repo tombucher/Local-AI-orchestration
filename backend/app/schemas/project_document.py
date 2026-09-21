@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models.project_document import DocumentKind
 
@@ -46,3 +46,23 @@ class DocumentDetail(DocumentResponse):
     """Réponse complète, avec le contenu textuel intégral."""
 
     content: Optional[str] = None
+
+
+class VisualReferenceCreate(BaseModel):
+    """Ajout manuel d'une image au moodboard, par son URL."""
+
+    url: str = Field(..., min_length=8, max_length=1000, description="URL directe de l'image")
+    title: Optional[str] = Field(None, max_length=500)
+    note: Optional[str] = Field(None, max_length=1000)
+    source_url: Optional[str] = Field(None, max_length=1000,
+                                      description="Page d'origine, si différente de l'image")
+
+    @field_validator("url", "source_url")
+    @classmethod
+    def exiger_http(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        v = v.strip()
+        if not v.lower().startswith(("http://", "https://")):
+            raise ValueError("L'adresse doit commencer par http:// ou https://")
+        return v
