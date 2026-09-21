@@ -23,6 +23,13 @@ FETCH_TIMEOUT = 15
 MAX_TAGS = 12
 MIN_TAG_LENGTH = 4
 
+# Catégories que les CMS posent par défaut : elles ne disent rien du flux
+PLACEHOLDER_CATEGORIES = {
+    'uncategorized', 'uncategorised', 'non classifié(e)', 'non classifie(e)',
+    'non classé', 'non classe', 'sans catégorie', 'sans categorie', 'divers',
+    'general', 'général', 'autres', 'news', 'actualités', 'actualites', 'blog',
+}
+
 # Mots trop fréquents pour caractériser un flux
 TAG_STOPWORDS = {
     # français
@@ -53,7 +60,14 @@ TAG_STOPWORDS = {
     'ceux', 'dont', 'mais', 'donc', 'puis', 'très', 'bien', 'peut', 'sont',
     'était', 'fait', 'faits', 'chez', 'sous', 'vers', 'selon', 'toute',
     'toutes', 'autre', 'année', 'années', 'jour', 'jours', 'gens',
+    'could', 'would', 'should', 'comment', 'comments', 'points', 'item',
+    'https', 'http', 'channel', 'media', 'teaser', 'published', 'online',
+    'around', 'across', 'voir', 'lire', 'chronique', 'billet', 'tribune',
+    'partir', 'depuis', 'pourquoi', 'comment',
 }
+
+
+_URL_RE = re.compile(r"https?://\S+|www\.\S+")
 
 
 def _words(text: str) -> List[str]:
@@ -61,9 +75,12 @@ def _words(text: str) -> List[str]:
 
     Découpe sur les apostrophes : sans ça « l'écologie » ressort en « l'écologie »
     au lieu d'« écologie », et le thème principal du flux passe à la trappe.
+    Les URL sont retirées d'abord : les résumés de Hacker News en sont truffés,
+    ce qui faisait remonter « https », « ycombinator » et « item » comme thèmes.
     """
     out: List[str] = []
-    for token in re.split(r"[^\w'’-]+", (text or '').casefold()):
+    cleaned = _URL_RE.sub(" ", text or "")
+    for token in re.split(r"[^\w'’-]+", cleaned.casefold()):
         for part in re.split(r"['’]", token):
             part = part.strip('-_')
             if len(part) >= MIN_TAG_LENGTH and not part.isdigit() and part not in TAG_STOPWORDS:
@@ -93,7 +110,9 @@ def derive_tags(parsed: Any, limit: int = MAX_TAGS) -> List[str]:
     for entry in entries:
         for tag in (entry.get('tags') or []):
             label = (tag.get('term') or '').casefold().strip()
-            if MIN_TAG_LENGTH <= len(label) <= 40 and label not in TAG_STOPWORDS:
+            if (MIN_TAG_LENGTH <= len(label) <= 40
+                    and label not in TAG_STOPWORDS
+                    and label not in PLACEHOLDER_CATEGORIES):
                 scores[label] += 4
         text = BeautifulSoup(
             f"{entry.get('title', '')} {entry.get('summary', '')}", 'html.parser'

@@ -7,6 +7,7 @@ Responsabilités :
 - Création de rapports
 - Adaptation du contenu selon le type de document
 """
+import asyncio
 import logging
 from typing import Dict, Any, List, Optional
 import ollama
@@ -117,7 +118,10 @@ class DocumentGeneratorModule:
         max_tokens = int(total_words * 2)  # Marge de sécurité
 
         # Génération
-        document = self._generate_with_llm(
+        # Appel bloquant déporté dans un thread : sinon la rédaction d'un document
+        # gèle toute l'API pendant plusieurs minutes.
+        document = await asyncio.to_thread(
+            self._generate_with_llm,
             prompt=prompt,
             model=model or "mistral",
             max_tokens=max_tokens
@@ -310,7 +314,7 @@ Ajoute:
 Sois réaliste et détaillé. Justifie brièvement chaque poste important.
 """
 
-        budget = self._generate_with_llm(prompt, max_tokens=1500)
+        budget = await asyncio.to_thread(self._generate_with_llm, prompt, max_tokens=1500)
 
         logger.info("✓ Generated budget")
 
@@ -357,7 +361,9 @@ Sois réaliste et détaillé. Justifie brièvement chaque poste important.
 Rédige la section en respectant toutes les contraintes.
 """
 
-        section = self._generate_with_llm(prompt, max_tokens=max_words * 2, model=model or "mistral")
+        section = await asyncio.to_thread(
+            self._generate_with_llm, prompt, max_tokens=max_words * 2, model=model or "mistral"
+        )
 
         logger.info(f"✓ Generated section '{section_name}' ({len(section)} chars)")
 

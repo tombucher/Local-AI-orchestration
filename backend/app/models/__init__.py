@@ -12,6 +12,7 @@ from app.models.veille_result import VeilleResult, VeilleResultType, VeilleResul
 from app.models.ideation_message import IdeationMessage, MessageRole
 from app.models.daily_report import DailyReport
 from app.models.rss_feed import RssFeed
+from app.models.project_document import ProjectDocument, DocumentKind
 
 __all__ = [
     "User",
@@ -25,4 +26,5 @@ __all__ = [
     "IdeationMessage", "MessageRole",
     "DailyReport",
     "RssFeed",
+    "ProjectDocument", "DocumentKind",
 ]

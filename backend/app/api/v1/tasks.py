@@ -16,6 +16,7 @@ from app.schemas.task_log import TaskLogResponse
 from app.models.task_log import TaskLog, TaskEventType
 from app.models.task import task_dependencies
 from sqlalchemy import insert, delete
+from app.services.task_progress import get_progress
 from app.services.maturity import MaturityService
 from app.schemas import (
     TaskCreate, TaskUpdate, TaskValidate, TaskResponse, TaskList,
@@ -87,6 +88,9 @@ async def _get_user_task(
     task_dict = task.__dict__.copy()
     task_dict['project_name'] = project_name
     task_dict['dependencies'] = dependencies
+    # Avancement d'une tâche en cours : le frontend interroge déjà cet endpoint
+    # en boucle, inutile d'en ajouter un second.
+    task_dict['progress'] = get_progress(task_id)
 
     return TaskResponse(**task_dict)
 
@@ -526,6 +530,8 @@ async def _generate_code_background(task_id: int):
             print(f"❌ Error in background generation for task {task_id}: {e}")
             # Mettre la tâche en erreur
             try:
+                from app.services.task_progress import clear_progress
+                clear_progress(task_id)
                 task.status = TaskStatus.READY
                 task.started_at = None
                 await db.commit()

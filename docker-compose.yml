@@ -98,7 +98,13 @@ services:
       dockerfile: Dockerfile
       target: development
     container_name: orchestrator-backend
-    command: uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+    # --reload-dir app : ne surveiller que le code servi. Un rechargement tue les
+    # tâches de fond en cours (une veille dure plusieurs minutes), donc écrire un
+    # test ou un script ne doit pas suffire à faire redémarrer le serveur.
+    command: >
+      uvicorn app.main:app --host 0.0.0.0 --port 8000
+      --reload --reload-dir app
+      --reload-exclude '*/tests/*' --reload-exclude '*_test.py' --reload-exclude 'test_*.py'
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
       interval: 30s

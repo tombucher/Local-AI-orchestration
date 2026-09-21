@@ -74,6 +74,10 @@ class TaskResponse(TaskBase):
     radar_report: Optional[dict] = None
     veille_topic_id: Optional[int] = None
 
+    # Avancement d'une tâche en cours (registre mémoire, pas en base) :
+    # {phase, label, current, total, percent}. None quand rien ne tourne.
+    progress: Optional[dict] = None
+
     class Config:
         from_attributes = True
         populate_by_name = True

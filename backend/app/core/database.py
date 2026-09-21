@@ -1,6 +1,8 @@
 """
 Configuration de la base de données avec SQLAlchemy 2.0
 """
+import logging
+from pathlib import Path
 from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -10,6 +12,8 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 # Convertir postgresql:// en postgresql+asyncpg://
@@ -62,12 +66,43 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             await session.close()
 
 
-async def init_db() -> None:
+async def check_db_schema() -> None:
+    """Compare le schéma en base à la dernière migration Alembic.
+
+    Remplace l'ancien `create_all` au démarrage : celui-ci créait les tables des
+    nouveaux modèles avant qu'Alembic ne passe, si bien que chaque migration
+    échouait ensuite sur « table already exists » et que le schéma réel pouvait
+    diverger des migrations sans que rien ne le signale.
+
+    Ne crée plus rien : se contente de prévenir, et n'empêche jamais le démarrage
+    (l'application peut être lancée avant la première migration).
     """
-    Initialise la base de données (crée les tables)
-    
-    Note:
-        En production, utiliser Alembic pour les migrations
-    """
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+    from sqlalchemy import text
+
+    try:
+        cfg = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
+        head = ScriptDirectory.from_config(cfg).get_current_head()
+    except Exception as e:
+        logger.debug(f"Impossible de lire les migrations Alembic : {e}")
+        return
+
+    try:
+        async with engine.connect() as conn:
+            result = await conn.execute(text("SELECT version_num FROM alembic_version"))
+            current = result.scalar()
+    except Exception:
+        logger.warning(
+            "⚠️ Base non initialisée (table alembic_version absente). "
+            "Lance : docker compose exec backend alembic upgrade head"
+        )
+        return
+
+    if current == head:
+        logger.info(f"✅ Schéma à jour (migration {current})")
+    else:
+        logger.warning(
+            f"⚠️ Schéma en retard : base sur '{current}', dernière migration '{head}'. "
+            "Lance : docker compose exec backend alembic upgrade head"
+        )

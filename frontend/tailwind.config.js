@@ -56,10 +56,17 @@ export default {
           '40%': { transform: 'scale(1.18)' },
           '100%': { transform: 'scale(1)' },
         },
+        // Barre de progression sans pourcentage connu : un va-et-vient qui dit
+        // « ça travaille » sans mentir sur l'avancement réel.
+        'indeterminate': {
+          '0%': { transform: 'translateX(-100%)' },
+          '100%': { transform: 'translateX(300%)' },
+        },
       },
       animation: {
         'fade-up': 'fade-up 0.45s ease-out both',
         'pop': 'pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)',
+        'indeterminate': 'indeterminate 1.6s ease-in-out infinite',
       },
     },
   },

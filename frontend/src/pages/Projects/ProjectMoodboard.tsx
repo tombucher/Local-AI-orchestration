@@ -6,7 +6,7 @@
  */
 
 import { useEffect, useState, useCallback } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Bookmark, X, ExternalLink, Image } from 'lucide-react';
 import { Navbar } from '../../components/Layout/Navbar';
 import { Sidebar } from '../../components/Layout/Sidebar';
@@ -14,11 +14,13 @@ import { EmptyState } from '../../components/EmptyState';
 import { api } from '../../services/api';
 import { tasksService } from '../../services/tasks';
 import type { VeilleResult } from '../../types/task.types';
+import { TaskType } from '../../types/task.types';
 import { VeilleResultStatus } from '../../types/task.types';
 import Loader from '../../components/ui/Loader';
 
 export const ProjectMoodboard = () => {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const [items, setItems] = useState<VeilleResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [lightbox, setLightbox] = useState<VeilleResult | null>(null);
@@ -91,7 +93,14 @@ export const ProjectMoodboard = () => {
             <EmptyState
               icon={Image}
               title="Pas encore de références visuelles"
-              description="Crée une veille « visuelle » sur ce projet : elle collectera automatiquement des images de référence (Openverse, musées en accès libre…)."
+              description="Le moodboard se remplit tout seul à partir d'une veille de type « visuelle ». Une veille d'actualités, elle, ne ramène que des liens d'articles. Sources : Openverse, Wikimedia Commons, Art Institute of Chicago, Met Museum, Are.na et flux design."
+              action={{
+                label: 'Créer une veille visuelle',
+                onClick: () =>
+                  navigate(
+                    `/tasks/new?project_id=${id}&task_type=${TaskType.VEILLE}&veille_scope=visual`,
+                  ),
+              }}
             />
           ) : (
             <div className="columns-2 md:columns-3 xl:columns-4 gap-4 [column-fill:_balance]">

@@ -135,6 +135,16 @@ async def build_project_memory(
     if active_features:
         lines.append(f"Volets activés : {', '.join(active_features)}")
 
+    # --- Documents déposés par l'utilisateur --------------------------------
+    from app.services.project_documents import load_documents, summarise_for_memory
+
+    docs = await load_documents(db, project.id)
+    if docs:
+        resume = summarise_for_memory(docs)
+        lines.append(resume)
+        for doc in docs[:10]:
+            vocabulary += _significant_words(f"{doc.name} {doc.note or ''}")
+
     # --- Ce sur quoi l'utilisateur travaille en ce moment -------------------
     tasks = (await db.execute(
         select(Task)

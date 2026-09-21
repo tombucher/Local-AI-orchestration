@@ -32,9 +32,11 @@ from app.services.modules.analyzer import AnalyzerModule
 from app.services.modules.document_generator import DocumentGeneratorModule
 from app.services.web_search_service import WebSearchService
 from app.core.config import settings as app_settings
-from app.services.model_registry import resolve_model, think_kwargs
+from app.services.model_registry import resolve_model, supports_vision, think_kwargs
 from app.services.project_workspace import build_workspace_context
 from app.services.project_memory import build_project_memory, score_against_memory
+from app.services.task_progress import clear_progress, set_progress
+from app.services.project_documents import build_document_context
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +190,7 @@ class UnifiedOrchestrator:
             task: Tâche à traiter
         """
         logger.info(f"🚀 Handling task {task.id}: {task.title} (type: {task.task_type})")
+        set_progress(task.id, "starting", "Démarrage…")
 
         # Health check Ollama avant de lancer la génération
         if not await self.llm_client.health_check():
@@ -256,6 +259,8 @@ class UnifiedOrchestrator:
             }
         )
 
+        # État terminal atteint : plus rien à afficher côté avancement
+        clear_progress(task.id)
         logger.info(f"✅ Task {task.id} ({task.task_type.value}) → {next_status}")
 
     async def _handle_code_generation(self, task: Task) -> None:
@@ -267,10 +272,23 @@ class UnifiedOrchestrator:
 
         # Les tâches d'un même projet se répartissent les fichiers (HTML / CSS / JS…) :
         # sans ce contexte chacune génère dans son coin et rien ne se relie.
+        set_progress(task.id, "context", "Lecture du contexte du projet…")
         workspace = await build_workspace_context(self.db, task, project)
 
+        # Documents déposés par l'utilisateur : ils font autorité sur les
+        # suppositions du modèle. Les images ne partent que vers un modèle vision.
+        documents = await build_document_context(
+            self.db, project.id,
+            objective=f"{task.title} {task.description or ''}",
+            include_images=supports_vision(model),
+        )
+
+        set_progress(task.id, "generation", f"Génération du code par {model}…")
         code = await self.llm_client.generate_code(
-            task, model_override=model, workspace_context=workspace.text
+            task, model_override=model,
+            workspace_context=workspace.text,
+            document_context=documents.text or None,
+            images=documents.images or None,
         )
         task.generated_code = code
 
@@ -315,6 +333,7 @@ class UnifiedOrchestrator:
 
         # Générer des requêtes DuckDuckGo ciblées via LLM (fallback basique si LLM off)
         # Carnet du projet : sans lui la veille ne voit que le titre de sa tâche
+        set_progress(task.id, "queries", "Préparation des requêtes de recherche…")
         memory = await build_project_memory(self.db, project, veille_topic)
         queries = await self._generate_veille_queries(task, model, veille_topic, memory)
         web_search = WebSearchService()
@@ -338,6 +357,7 @@ class UnifiedOrchestrator:
                 logger.warning(f"DuckDuckGo search failed for '{query}': {e}")
                 return []
 
+        set_progress(task.id, "search", f"Recherche web · {len(queries)} requêtes")
         search_results = await asyncio.gather(*[_search_one(q) for q in queries])
         raw_results = [r for batch in search_results for r in batch]
 
@@ -383,6 +403,7 @@ class UnifiedOrchestrator:
             )).scalars().all()
         ]
 
+        set_progress(task.id, "rss", "Lecture des flux RSS…")
         async with WebResearchModule() as research:
             rss_results = await research.search_rss_articles(
                 terms=feed_terms,
@@ -433,7 +454,13 @@ class UnifiedOrchestrator:
             # Objectif précis de cette tâche de veille (titre + description)
             task_objective = task.description.strip() if task.description else task.title
 
-            for result in unique_results[:20]:
+            to_analyse = unique_results[:20]
+            for index, result in enumerate(to_analyse, start=1):
+                set_progress(
+                    task.id, "analysis",
+                    "Analyse de pertinence par l'IA",
+                    current=index, total=len(to_analyse),
+                )
                 analysis = await self.analyzer.analyze_relevance(
                     content=result,
                     project_context={
@@ -486,6 +513,7 @@ class UnifiedOrchestrator:
 
             logger.info(f"✅ {len(analyzed_results)} résultats pertinents sauvegardés")
 
+            set_progress(task.id, "radar", "Rédaction du rapport…")
             # Phase 3 : Générer le Rapport Radar
             radar = await self.analyzer.generate_radar_report(
                 analyzed_results=analyzed_results,
@@ -530,6 +558,7 @@ class UnifiedOrchestrator:
 
         # Sans le carnet du projet, un topic sans mots-clés cherchait littéralement
         # « veille visuelle » et ramenait des avions de ligne et des vierges à l'enfant.
+        set_progress(task.id, "queries", "Préparation des requêtes d'images…")
         memory = await build_project_memory(self.db, project, topic)
 
         # Requêtes anglaises courtes (les APIs d'images répondent mieux en anglais).
@@ -551,6 +580,7 @@ class UnifiedOrchestrator:
         # résultat design alors que ce sont les meilleures sources pour ce projet.
         feed_terms = [k for k in (keywords or []) if k.casefold() != task.title.casefold()]
 
+        set_progress(task.id, "images", f"Collecte d'images · {len(queries)} requêtes")
         async with WebResearchModule() as research:
             images = await research.search_visual_references(
                 queries,
@@ -571,6 +601,7 @@ class UnifiedOrchestrator:
         # Notation par recouvrement avec le vocabulaire du projet, puis coupe.
         # Les APIs musée (Met, AIC) répondent par du repli classique dès que la
         # requête sort de leur fonds : sans ce tri le moodboard est du bruit.
+        set_progress(task.id, "scoring", f"Tri de {len(images)} références…")
         total_found = len(images)
         if memory.is_thin() and not strong_terms:
             for img in images:

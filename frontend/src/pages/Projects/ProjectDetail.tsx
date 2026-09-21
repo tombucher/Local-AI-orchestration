@@ -19,6 +19,7 @@ import { ProjectHeader } from '../../components/projects/ProjectHeader';
 import { ProjectFeaturesPanel, ProjectFinancialPanel } from '../../components/projects/ProjectInfoPanels';
 import { ProjectHealthDashboard } from '../../components/projects/ProjectHealthDashboard';
 import { ProjectTasksBoard } from '../../components/projects/ProjectTasksBoard';
+import ProjectDocuments from '../../components/projects/ProjectDocuments';
 import ConfirmDialog from '../../components/ui/ConfirmDialog';
 import Loader from '../../components/ui/Loader';
 import { tasksService } from '../../services/tasks';
@@ -86,6 +87,12 @@ export const ProjectDetail = () => {
     return new Map(criticalPathData.ordered_tasks.map((t) => [t.task_id, t]));
   }, [criticalPathData]);
 
+  /** Ordre d'exécution conseillé : le backend renvoie un tri topologique */
+  const taskOrder = useMemo(() => {
+    if (!criticalPathData || criticalPathData.has_cycle) return undefined;
+    return new Map(criticalPathData.ordered_tasks.map((t, index) => [t.task_id, index]));
+  }, [criticalPathData]);
+
   const reloadPlanning = async (projectId: number) => {
     await Promise.all([loadTasks(projectId), loadCriticalPath(projectId), fetchProjectStats(projectId)]);
   };
@@ -134,7 +141,10 @@ export const ProjectDetail = () => {
     }
   };
 
-  if (loading) {
+  // Uniquement au tout premier chargement : sur un rafraîchissement (Gantt étiré,
+  // dépendance créée…) remplacer la page par un loader démonte le contenu et
+  // renvoie le navigateur en haut de page.
+  if (loading && !currentProject) {
     return (
       <PageShell>
         <div className="flex items-center justify-center py-12"><Loader size="lg" /></div>
@@ -182,6 +192,7 @@ export const ProjectDetail = () => {
       ) : (
         <>
           <ProjectFeaturesPanel project={project} />
+          <ProjectDocuments projectId={project.id} />
           <ProjectHealthDashboard
             project={project}
             stats={currentProjectStats}
@@ -190,7 +201,7 @@ export const ProjectDetail = () => {
             onLinkTasks={handleLinkTasks}
           />
           <ProjectFinancialPanel project={project} />
-          <ProjectTasksBoard projectId={project.id} tasks={tasks} loading={tasksLoading} criticalPathMap={criticalPathMap} />
+          <ProjectTasksBoard projectId={project.id} tasks={tasks} loading={tasksLoading} criticalPathMap={criticalPathMap} taskOrder={taskOrder} />
         </>
       )}
 
