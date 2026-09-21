@@ -20,6 +20,28 @@ from app.core.config import settings as app_settings
 logger = logging.getLogger(__name__)
 
 
+
+def _image_d_entree(entry) -> Optional[str]:
+    """Vignette d'une entrée RSS, sans télécharger la page de l'article.
+
+    Mesuré sur les flux configurés : Reporterre, Hyperallergic et Colossal en
+    fournissent une pour la quasi-totalité de leurs entrées, tantôt en
+    `media:content`, tantôt par une balise <img> dans le résumé.
+    """
+    for media in (entry.get("media_content") or []):
+        url = media.get("url")
+        if url and (str(media.get("type", "")).startswith("image")
+                    or url.lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".gif"))):
+            return url
+    for thumb in (entry.get("media_thumbnail") or []):
+        if thumb.get("url"):
+            return thumb["url"]
+    html = (entry.get("content") or [{}])[0].get("value") or entry.get("summary", "")
+    balise = BeautifulSoup(html, "html.parser").find("img") if html else None
+    src = balise.get("src") if balise else None
+    return src if src and src.startswith("http") else None
+
+
 class WebResearchModule:
     """
     Module de recherche web réutilisable
@@ -505,6 +527,7 @@ class WebResearchModule:
                     "description": summary,
                     "source_platform": source_name,
                     "published": entry.get("published") or entry.get("updated") or "",
+                    "image": _image_d_entree(entry),
                 }
                 if lowered and not any(t in f"{title} {summary}".casefold() for t in lowered):
                     if len(spare) < max_per_feed:

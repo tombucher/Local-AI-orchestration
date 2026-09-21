@@ -349,6 +349,8 @@ class UnifiedOrchestrator:
                         'url': r.get('href', ''),
                         'description': r.get('body', ''),
                         'source_platform': 'DuckDuckGo',
+                        # Vignette fournie par le moteur quand il en a une
+                        'image': r.get('image'),
                     }
                     for r in ddg_results
                 ]
@@ -490,6 +492,11 @@ class UnifiedOrchestrator:
                         url=result.get('url'),
                         description=result.get('description', ''),
                         source_platform=result.get('source_platform', ''),
+                        # Illustration de l'article, déjà fournie par le moteur ou
+                        # le flux : elle rend le radar lisible d'un coup d'œil et
+                        # permet d'envoyer la trouvaille au moodboard.
+                        image_url=result.get('image'),
+                        thumbnail_url=result.get('image'),
                         ai_summary=ai_summary,
                         relevance_score=analysis['relevance_score'] * 100,
                         key_points=analysis['key_points'],

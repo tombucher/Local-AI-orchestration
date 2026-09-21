@@ -93,7 +93,7 @@ export const TaskResultPanel = ({
               <Loader size="lg" label="Chargement des résultats…" />
             </div>
           ) : (
-            <VeilleResultsViewer results={veilleResults} total={veilleTotal} />
+            <VeilleResultsViewer results={veilleResults} total={veilleTotal} projectId={task.project_id} />
           )}
         </Card>
       </div>
@@ -133,7 +133,7 @@ export const TaskResultPanel = ({
         {task.task_type === TaskType.FUNDING_SEARCH && veilleResults.length > 0 && (
           <Card>
             <h2 className="font-display text-xl text-ink mb-4">Opportunités trouvées</h2>
-            <VeilleResultsViewer results={veilleResults} total={veilleTotal} />
+            <VeilleResultsViewer results={veilleResults} total={veilleTotal} projectId={task.project_id} />
           </Card>
         )}
         <Card>

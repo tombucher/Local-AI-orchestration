@@ -7,16 +7,19 @@
 import { useState } from 'react';
 import {
   ExternalLink, Star, ChevronDown, ChevronUp, Globe, Tag, Calendar,
-  Bookmark, X, RotateCcw,
+  Bookmark, X, RotateCcw, ImagePlus,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { VeilleResult } from '../../types/task.types';
 import { VeilleResultType, VeilleResultStatus } from '../../types/task.types';
 import { tasksService } from '../../services/tasks';
+import { api } from '../../services/api';
 
 interface VeilleResultsViewerProps {
   results: VeilleResult[];
   total: number;
+  /** Permet d'envoyer une illustration au moodboard du projet */
+  projectId?: number;
 }
 
 /** Labels par type de résultat (filets colorés, pas de pastilles) */
@@ -59,10 +62,11 @@ const scoreColor = (score: number) =>
   'text-ink-faint border-ink-line';
 
 /** Carte pour un résultat de veille */
-const VeilleResultCard = ({ result: initial }: { result: VeilleResult }) => {
+const VeilleResultCard = ({ result: initial, projectId }: { result: VeilleResult; projectId?: number }) => {
   const [result, setResult] = useState(initial);
   const [expanded, setExpanded] = useState(false);
   const [pending, setPending] = useState(false);
+  const [versMoodboard, setVersMoodboard] = useState(false);
   const typeConfig = RESULT_TYPE_CONFIG[result.result_type] || { label: result.result_type, emoji: '📋' };
 
   const isSaved = result.status === VeilleResultStatus.SAVED;
@@ -82,6 +86,24 @@ const VeilleResultCard = ({ result: initial }: { result: VeilleResult }) => {
     }
   };
 
+  /** Envoie l'illustration de l'article vers le moodboard du projet */
+  const envoyerAuMoodboard = async () => {
+    if (!projectId || !result.image_url) return;
+    setVersMoodboard(true);
+    try {
+      await api.post(`/projects/${projectId}/visual-references`, {
+        url: result.image_url,
+        title: result.title,
+        source_url: result.url || undefined,
+      });
+      toast.success('Ajoutée au moodboard');
+    } catch {
+      // Motif déjà affiché par l'intercepteur API
+    } finally {
+      setVersMoodboard(false);
+    }
+  };
+
   return (
     <div
       className={`bg-paper-card border border-ink-line p-4 transition-all
@@ -90,6 +112,17 @@ const VeilleResultCard = ({ result: initial }: { result: VeilleResult }) => {
     >
       {/* Header */}
       <div className="flex items-start justify-between gap-3 mb-2">
+        {/* Illustration de l'article, fournie par le moteur ou le flux */}
+        {result.image_url && (
+          <img
+            src={result.image_url}
+            alt=""
+            loading="lazy"
+            referrerPolicy="no-referrer"
+            className="w-20 h-20 object-cover border border-ink-line shrink-0"
+            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+          />
+        )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1.5 flex-wrap">
             {result.url && <Favicon url={result.url} />}
@@ -109,6 +142,16 @@ const VeilleResultCard = ({ result: initial }: { result: VeilleResult }) => {
 
         {/* Actions épingler / écarter */}
         <div className="flex items-center gap-1 shrink-0">
+          {!isDismissed && projectId && result.image_url && (
+            <button
+              onClick={envoyerAuMoodboard}
+              disabled={versMoodboard}
+              title="Envoyer l'image au moodboard"
+              className="p-1.5 text-ink-faint hover:text-accent hover:bg-paper-warm transition-colors disabled:opacity-40"
+            >
+              <ImagePlus className="w-4 h-4" />
+            </button>
+          )}
           {!isDismissed && (
             <button
               onClick={() => setStatus(isSaved ? VeilleResultStatus.READ : VeilleResultStatus.SAVED)}
@@ -232,7 +275,7 @@ const VeilleResultCard = ({ result: initial }: { result: VeilleResult }) => {
   );
 };
 
-export const VeilleResultsViewer = ({ results, total }: VeilleResultsViewerProps) => {
+export const VeilleResultsViewer = ({ results, total, projectId }: VeilleResultsViewerProps) => {
   if (!results || results.length === 0) {
     return (
       <div className="bg-paper border border-dashed border-ink-line p-6 text-center">
@@ -259,7 +302,7 @@ export const VeilleResultsViewer = ({ results, total }: VeilleResultsViewerProps
       {/* Vignettes */}
       <div className="space-y-3">
         {results.map((result) => (
-          <VeilleResultCard key={result.id} result={result} />
+          <VeilleResultCard key={result.id} result={result} projectId={projectId} />
         ))}
       </div>
     </div>

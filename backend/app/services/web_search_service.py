@@ -89,6 +89,10 @@ def _searxng_search_sync(
             "title": item.get("title") or "Sans titre",
             "href": href,
             "body": item.get("content") or "",
+            # SearXNG joint souvent la vignette du résultat (mesuré : la moitié
+            # des résultats). Autant la conserver : la récupérer plus tard
+            # coûterait un téléchargement de page par article.
+            "image": item.get("img_src") or item.get("thumbnail") or None,
         })
     logger.info(f"✓ SearXNG: {len(results)} résultats pour '{query}'")
     return results
