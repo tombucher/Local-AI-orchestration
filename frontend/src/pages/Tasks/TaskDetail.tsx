@@ -272,6 +272,27 @@ export const TaskDetail = () => {
         onRetry={handleRetry}
       />
 
+      {/* « À valider » sans rien à valider : impasse rencontrée sur d'anciennes
+          tâches restées bloquées après un échec de génération silencieux.
+          Sans ce bloc, la page n'affichait strictement rien sous l'en-tête. */}
+      {task.status === TaskStatus.MANUAL_REVIEW && !hasGeneratedContent(task, veilleResults) && (
+        <div className="bg-warning/5 border border-warning/30 p-6 mb-6">
+          <p className="text-warning font-medium">Rien à valider</p>
+          <p className="text-sm text-ink-soft mt-1">
+            Cette tâche attend une validation, mais aucun contenu n'a été produit — la
+            génération a échoué sans le signaler. Il n'y a donc rien à relire ni à corriger.
+          </p>
+          <button
+            onClick={handleGenerate}
+            disabled={actionLoading}
+            className="mt-4 inline-flex items-center gap-2 px-4 py-2 bg-accent text-paper hover:opacity-90 disabled:opacity-40 transition-opacity text-sm font-medium"
+          >
+            <RefreshCw className="w-4 h-4" />
+            Relancer la génération
+          </button>
+        </div>
+      )}
+
       {task.status === TaskStatus.COMPLETED && (
         <div className="space-y-6">
           {hasGeneratedContent(task, veilleResults) ? resultPanel : (

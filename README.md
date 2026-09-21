@@ -62,7 +62,7 @@ Créer un compte via l'interface, puis choisir tes modèles dans **Paramètres**
 1. **Nouveau projet** → décris ton idée dans le dialogue d'idéation, puis finalise.
 2. **Analyser avec l'IA** → coche les tâches proposées, elles sont créées avec leurs dépendances et leurs veilles.
 3. Sur une tâche **code** ou **document** : « Générer maintenant », puis valide, édite ou regénère avec des instructions.
-4. Crée une **veille** (type + fréquence, dont « une seule fois ») ; les veilles **visuelles** alimentent le **Moodboard** du projet.
+4. Crée une **veille** : la **portée** décide de tout — « Visuelle » alimente le Moodboard en images, les autres portées ramènent des articles. Le titre de la tâche n'y change rien.
 5. Dans **Paramètres → Mes flux de veille**, ajoute les flux RSS que tu croises : ils alimentent la veille en priorité.
 6. Chaque matin, le **briefing** sur le dashboard te dit par quoi commencer.
 
@@ -73,7 +73,7 @@ Créer un compte via l'interface, puis choisir tes modèles dans **Paramètres**
 ```bash
 docker compose ps                         # état des services
 docker compose logs -f backend            # logs backend
-./run_tests.sh                            # 171 tests backend
+./run_tests.sh                            # 182 tests backend
 docker compose up -d --build backend      # rebuild après changement de dépendances
 docker compose exec backend alembic upgrade head
 ls backups/                               # sauvegardes Postgres quotidiennes (14 jours)

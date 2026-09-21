@@ -49,7 +49,7 @@ Tout tourne en local : FastAPI + PostgreSQL dans Docker, React/Vite, Ollama nati
 - Scheduler (queue toutes les 2 min, veilles toutes les 15 min, watchdog 5 min, rapports 8h), retry avec backoff.
 - **Registre de modèles** : si un modèle Ollama configuré n'existe plus, repli automatique sur un modèle installé ; thinking désactivé par détection de capacités.
 - Design system « journal d'atelier » (papier/encre/vermillon, Fraunces + Archivo), PWA installable.
-- **171 tests** backend (`./run_tests.sh`), sauvegardes Postgres quotidiennes (`./backups/`), rotation des logs.
+- **182 tests** backend (`./run_tests.sh`), sauvegardes Postgres quotidiennes (`./backups/`), rotation des logs.
 
 ## 🔒 Sécurité (audit du 19/09/2026)
 - Isolation par utilisateur sur tous les endpoints ; 401 sans jeton, 404 sur les données d'autrui.
@@ -82,6 +82,8 @@ Les modèles changent souvent : ne jamais coder un nom en dur, passer par `backe
 - Rechargement uvicorn déclenché par tout fichier sous `backend/` (y compris les tests) : il tuait les tâches de fond en cours. Surveillance restreinte à `app/`.
 - Moodboard qui débordait de toute la page : `<main className="flex-1">` sans `min-w-0` ne peut pas rétrécir sous la largeur intrinsèque de son contenu, et une légende `truncate` (nowrap) imposait 4 972 px dans une fenêtre de 1 440. Corrigé sur les six pages concernées.
 - Vignettes chargées en `loading="lazy"` masquées en `display:none` : une image masquée n'entre jamais dans le viewport, donc n'est jamais chargée. Squelette superposé plutôt que masquage.
+- **La portée choisie dans le formulaire de veille était ignorée** : elle était enregistrée dans `task_metadata['scope']` mais jamais relue, et l'orchestrateur créait systématiquement un sujet « actualités ». Choisir « Visuelle » n'avait donc aucun effet. La portée décide désormais du pipeline, et un sujet incohérent hérité du bug bascule vers la portée demandée.
+- Tâche « à valider » sans contenu : impasse totale (rien à valider, à rejeter ni à relancer, le type `document_writing` n'étant pas relançable). La relance est autorisée quand il n'y a rien à perdre, et l'interface explique la situation au lieu de n'afficher qu'un en-tête.
 - Flux d'actualité obsolètes corrigés : Yale E360 → `/feed.xml`, The Ecologist → `/rss` (les anciennes URL renvoyaient 404) ; Prosthetic Knowledge écarté (blog retiré).
 - Recherche de financements qui renvoyait des datasets data.gouv au lieu d'appels à projets.
 - `GET /tasks/{id}/logs` en 500 ; CORS hardcodé ; ~30 erreurs TypeScript qui cassaient `npm run build`.

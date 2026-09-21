@@ -315,6 +315,18 @@ class UnifiedOrchestrator:
         keywords = self._extract_keywords(task)
         excluded_keywords = []
 
+        # Portée demandée par l'utilisateur dans le formulaire. Elle était
+        # enregistrée dans les metadata de la tâche mais jamais relue : choisir
+        # « Visuelle » n'avait donc aucun effet, et toute veille repartait en
+        # « actualités ». C'est la portée qui décide du pipeline, pas le titre.
+        scope_demande = None
+        libelle_scope = ((task.task_metadata or {}).get('scope') or '').strip().lower()
+        if libelle_scope:
+            try:
+                scope_demande = VeilleScope(libelle_scope)
+            except ValueError:
+                logger.warning(f"Portée de veille inconnue '{libelle_scope}' sur la tâche {task.id}")
+
         # Si lié à un VeilleTopic, récupérer les exclusions et keywords affinés
         veille_topic = None
         if task.veille_topic_id:
@@ -327,8 +339,31 @@ class UnifiedOrchestrator:
                     keywords = veille_topic.keywords
                 excluded_keywords = veille_topic.excluded_keywords or []
 
+        # Le sujet rattaché ne correspond pas à la portée demandée : c'est le
+        # symptôme du bug ci-dessus, un sujet « actualités » ayant été créé par
+        # défaut. Le choix explicite de l'utilisateur prime.
+        if scope_demande and veille_topic and veille_topic.scope != scope_demande:
+            logger.info(
+                f"↻ Tâche {task.id} : portée demandée « {scope_demande.value} » ≠ sujet "
+                f"« {veille_topic.scope.value} » — bascule vers un sujet {scope_demande.value}"
+            )
+            veille_topic = await self._get_or_create_veille_topic(
+                project_id=project.id, scope=scope_demande, keywords=keywords
+            )
+            task.veille_topic_id = veille_topic.id
+            if veille_topic.keywords:
+                keywords = veille_topic.keywords
+            excluded_keywords = veille_topic.excluded_keywords or []
+
         # Veille visuelle (moodboard) : pipeline images dédié
         if veille_topic and veille_topic.scope == VeilleScope.VISUAL:
+            await self._handle_visual_veille(task, veille_topic, project, model)
+            return
+        if not veille_topic and scope_demande == VeilleScope.VISUAL:
+            veille_topic = await self._get_or_create_veille_topic(
+                project_id=project.id, scope=VeilleScope.VISUAL, keywords=keywords
+            )
+            task.veille_topic_id = veille_topic.id
             await self._handle_visual_veille(task, veille_topic, project, model)
             return
 
@@ -441,7 +476,8 @@ class UnifiedOrchestrator:
         else:
             topic = await self._get_or_create_veille_topic(
                 project_id=project.id,
-                scope=VeilleScope.NEWS,  # Scope générique pour veille unifiée
+                # La portée choisie par l'utilisateur, « actualités » à défaut
+                scope=scope_demande or VeilleScope.NEWS,
                 keywords=keywords
             )
 

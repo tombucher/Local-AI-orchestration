@@ -580,6 +580,12 @@ async def generate_task_code(
         # Pour les veilles et tâches autonomes, on accepte aussi COMPLETED/FAILED/CANCELLED
         allowed_statuses |= {TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED}
 
+    # Une tâche « à valider » qui n'a rien produit est une impasse : il n'y a rien
+    # à valider ni à rejeter, et le type ne permettait pas de relancer. On autorise
+    # la relance, puisqu'il n'y a rien à perdre.
+    if task.status == TaskStatus.MANUAL_REVIEW and not (task.generated_code or '').strip():
+        allowed_statuses.add(TaskStatus.MANUAL_REVIEW)
+
     if task.status not in allowed_statuses:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -587,7 +593,8 @@ async def generate_task_code(
         )
 
     # Réinitialiser les champs si re-lancement depuis COMPLETED/FAILED/CANCELLED
-    if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED):
+    if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED,
+                       TaskStatus.MANUAL_REVIEW):
         task.radar_report = None
         task.generated_code = None
         task.completed_at = None
