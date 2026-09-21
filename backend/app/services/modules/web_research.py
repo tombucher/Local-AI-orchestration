@@ -544,6 +544,95 @@ class WebResearchModule:
         logger.info(f"📰 RSS ({scope}) : {len(results)} articles depuis {len(urls)} flux")
         return results
 
+    # Unsplash et Pexels : APIs officielles, clés gratuites, licences permissives
+    # (usage libre y compris commercial, attribution appréciée mais non exigée).
+    # Ce sont les seules sources du lot dont les images sont réellement
+    # réutilisables sans vérifier les droits au cas par cas.
+    UNSPLASH_SEARCH = "https://api.unsplash.com/search/photos"
+    PEXELS_SEARCH = "https://api.pexels.com/v1/search"
+
+    async def search_unsplash(self, query: str, max_results: int = 10) -> List[Dict[str, Any]]:
+        """Photographies Unsplash. Nécessite `UNSPLASH_ACCESS_KEY` (gratuite)."""
+        cle = getattr(app_settings, "UNSPLASH_ACCESS_KEY", "") or ""
+        if not cle:
+            return []
+        try:
+            async with self.session.get(
+                self.UNSPLASH_SEARCH,
+                params={"query": query, "per_page": min(max_results, 30)},
+                headers={"Authorization": f"Client-ID {cle}",
+                         "Accept-Version": "v1"},
+                timeout=20,
+            ) as resp:
+                if resp.status == 401:
+                    logger.error("Unsplash refuse la clé (401) — vérifier UNSPLASH_ACCESS_KEY")
+                    return []
+                resp.raise_for_status()
+                data = await resp.json()
+        except Exception as e:
+            logger.warning(f"Unsplash search failed for '{query}': {e}")
+            return []
+
+        results = []
+        for photo in (data.get("results") or [])[:max_results]:
+            urls = photo.get("urls") or {}
+            apercu = urls.get("small") or urls.get("thumb")
+            if not apercu:
+                continue
+            auteur = ((photo.get("user") or {}).get("name") or "").strip()
+            results.append({
+                "title": (photo.get("description") or photo.get("alt_description")
+                          or f"Photo de {auteur}" or "Sans titre")[:200],
+                "url": ((photo.get("links") or {}).get("html")) or "https://unsplash.com",
+                "image_url": urls.get("regular") or apercu,
+                "thumbnail_url": apercu,
+                "license": f"Unsplash — libre d'usage{f' · {auteur}' if auteur else ''}",
+                "description": f"Unsplash · {query}",
+                "source_platform": "Unsplash",
+            })
+        logger.info(f"✓ Unsplash: {len(results)} images pour '{query}'")
+        return results
+
+    async def search_pexels(self, query: str, max_results: int = 10) -> List[Dict[str, Any]]:
+        """Photographies Pexels. Nécessite `PEXELS_API_KEY` (gratuite)."""
+        cle = getattr(app_settings, "PEXELS_API_KEY", "") or ""
+        if not cle:
+            return []
+        try:
+            async with self.session.get(
+                self.PEXELS_SEARCH,
+                params={"query": query, "per_page": min(max_results, 80)},
+                headers={"Authorization": cle},
+                timeout=20,
+            ) as resp:
+                if resp.status == 401:
+                    logger.error("Pexels refuse la clé (401) — vérifier PEXELS_API_KEY")
+                    return []
+                resp.raise_for_status()
+                data = await resp.json()
+        except Exception as e:
+            logger.warning(f"Pexels search failed for '{query}': {e}")
+            return []
+
+        results = []
+        for photo in (data.get("photos") or [])[:max_results]:
+            src = photo.get("src") or {}
+            apercu = src.get("medium") or src.get("small") or src.get("tiny")
+            if not apercu:
+                continue
+            auteur = (photo.get("photographer") or "").strip()
+            results.append({
+                "title": (photo.get("alt") or f"Photo de {auteur}" or "Sans titre")[:200],
+                "url": photo.get("url") or "https://www.pexels.com",
+                "image_url": src.get("large") or src.get("original") or apercu,
+                "thumbnail_url": apercu,
+                "license": f"Pexels — libre d'usage{f' · {auteur}' if auteur else ''}",
+                "description": f"Pexels · {query}",
+                "source_platform": "Pexels",
+            })
+        logger.info(f"✓ Pexels: {len(results)} images pour '{query}'")
+        return results
+
     # Internet Archive : API de recherche publique et documentée, sans clé.
     # Évaluée le 21/09/2026 sur des requêtes d'art numérique : 62 % d'images
     # jugées pertinentes par le modèle vision, médiane 90 — de loin le meilleur
@@ -752,6 +841,13 @@ class WebResearchModule:
         # Internet Archive : meilleur rendement mesuré, et sans clé
         for q in queries[:3]:
             factories.append(lambda q=q: self.search_internet_archive(q))
+        # Unsplash et Pexels : ignorés silencieusement si la clé n'est pas configurée
+        if getattr(app_settings, "UNSPLASH_ACCESS_KEY", ""):
+            for q in queries[:2]:
+                factories.append(lambda q=q: self.search_unsplash(q))
+        if getattr(app_settings, "PEXELS_API_KEY", ""):
+            for q in queries[:2]:
+                factories.append(lambda q=q: self.search_pexels(q))
         # Are.na : la meilleure source pour l'art numérique contemporain, mais
         # deux appels par requête — on la limite aux deux premières.
         if getattr(app_settings, "ARENA_ACCESS_TOKEN", ""):

@@ -48,6 +48,13 @@ class Settings(BaseSettings):
     # https://aides-territoires.beta.gouv.fr/api/ ; vide = source ignorée
     AIDES_TERRITOIRES_API_KEY: str = ""
 
+    # Unsplash et Pexels (moodboard) — clés gratuites, licences permissives :
+    # https://unsplash.com/developers  ·  https://www.pexels.com/api/
+    # Vides = sources ignorées. Ce sont les seules images du lot réellement
+    # réutilisables sans vérifier les droits au cas par cas.
+    UNSPLASH_ACCESS_KEY: str = ""
+    PEXELS_API_KEY: str = ""
+
     # Are.na (moodboard) — jeton perso gratuit : https://dev.are.na/oauth/applications
     # Vide = source ignorée. Les lectures publiques passent même sans jeton, mais
     # le jeton évite les limitations de débit.
