@@ -48,6 +48,8 @@ export interface Project {
 
 export interface ProjectStats {
   total_tasks: number;
+  /** Tâches ayant réellement produit un contenu (≠ simplement « terminées ») */
+  tasks_with_output?: number;
   tasks_by_status: Record<string, number>;
   tasks_by_priority: Record<string, number>;
   total_time_seconds?: number;

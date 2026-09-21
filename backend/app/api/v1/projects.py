@@ -7,7 +7,7 @@ from typing import Optional, List
 
 logger = logging.getLogger(__name__)
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status, Query
-from sqlalchemy import select, func, and_, case
+from sqlalchemy import select, func, and_, case, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -339,10 +339,23 @@ async def get_project_stats(
             hourly_rate = project.financial_config['hourly_rate']
             estimated_cost = (total_time / 3600) * hourly_rate
     
+    # Tâches ayant réellement produit quelque chose. Compter les statuts ne suffit
+    # pas : une tâche pouvait être « terminée » sans le moindre contenu, et le
+    # projet s'affichait alors comme abouti alors que rien n'existait.
+    avec_resultat_query = select(func.count()).where(
+        Task.project_id == project_id,
+        or_(
+            and_(Task.generated_code.isnot(None), func.length(func.trim(Task.generated_code)) > 0),
+            Task.radar_report.isnot(None),
+        ),
+    )
+    tasks_with_output = (await db.execute(avec_resultat_query)).scalar() or 0
+
     return ProjectStats(
         total_tasks=total_tasks,
         tasks_by_status=tasks_by_status,
         tasks_by_priority=tasks_by_priority,
+        tasks_with_output=tasks_with_output,
         total_time_seconds=total_time,
         estimated_cost=estimated_cost
     )

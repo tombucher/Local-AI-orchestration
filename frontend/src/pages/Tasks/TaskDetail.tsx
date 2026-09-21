@@ -296,9 +296,21 @@ export const TaskDetail = () => {
       {task.status === TaskStatus.COMPLETED && (
         <div className="space-y-6">
           {hasGeneratedContent(task, veilleResults) ? resultPanel : (
-            <div className="bg-success/5 border border-success/30 p-6">
-              <p className="text-success font-medium">✅ Tâche terminée</p>
-              <p className="text-sm text-ink-soft mt-1">Cette tâche a été marquée comme terminée sans contenu généré.</p>
+            <div className="bg-warning/5 border border-warning/30 p-6">
+              <p className="text-warning font-medium">Terminée, mais rien n'a été produit</p>
+              <p className="text-sm text-ink-soft mt-1">
+                Cette tâche est marquée comme terminée alors qu'aucun contenu n'a été
+                généré. C'était possible avant : la génération pouvait échouer sans
+                le signaler. Relance-la pour obtenir un vrai résultat.
+              </p>
+              <button
+                onClick={handleGenerate}
+                disabled={actionLoading}
+                className="mt-4 inline-flex items-center gap-2 px-4 py-2 bg-accent text-paper hover:opacity-90 disabled:opacity-40 transition-opacity text-sm font-medium"
+              >
+                <RefreshCw className="w-4 h-4" />
+                Relancer la génération
+              </button>
             </div>
           )}
           {task.validation_notes && (

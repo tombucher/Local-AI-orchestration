@@ -54,10 +54,12 @@ def test_portee_inconnue_ne_casse_pas():
 
 
 def test_relance_possible_si_rien_a_valider():
-    """Garde-fou : sans cela, une tâche vide en MANUAL_REVIEW est une impasse."""
+    """Garde-fou : sans cela, une tâche arrivée à son terme sans rien produire
+    est une impasse — rien à valider, rien à rejeter, rien à relancer."""
     from app.api.v1 import tasks
 
     source = inspect.getsource(tasks.generate_task_code)
-    assert "MANUAL_REVIEW and not (task.generated_code" in source
+    assert "TaskStatus.MANUAL_REVIEW, TaskStatus.COMPLETED" in source
+    assert "not (task.generated_code or '').strip()" in source
     # …et les champs doivent être réinitialisés à la relance
-    assert "TaskStatus.MANUAL_REVIEW)" in source
+    assert "task.generated_code = None" in source

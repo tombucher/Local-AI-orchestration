@@ -33,7 +33,16 @@ export const ProjectHealthDashboard = ({ project, stats, criticalPath, onResizeT
     {/* Maturité */}
     <div className="bg-paper-card shadow-card border border-ink-line p-6 mb-6">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="font-display text-xl text-ink">Score de maturité</h3>
+        <div>
+          <h3 className="font-display text-xl text-ink">Maturité du plan</h3>
+          {/* Le score note la QUALITÉ DU PLAN (dépendances, descriptions,
+              échéances, chemin critique), pas ce qui a été réalisé. Sans cette
+              précision il se lit comme un taux d'avancement. */}
+          <p className="text-xs text-ink-faint mt-0.5">
+            Qualité de l'organisation : dépendances, descriptions, échéances, chemin critique.
+            Ne mesure pas ce qui a été produit.
+          </p>
+        </div>
         <AIAnalysisButton projectId={project.id} onAnalysisComplete={() => {}} />
       </div>
       <div className="flex flex-col items-center">
@@ -57,6 +66,24 @@ export const ProjectHealthDashboard = ({ project, stats, criticalPath, onResizeT
         </div>
       ) : (
         <p className="text-sm text-ink-faint mb-4">Chargement des statistiques…</p>
+      )}
+
+      {/* Ce qui existe vraiment : une tâche pouvait être « terminée » sans avoir
+          produit la moindre ligne, et le projet paraissait alors abouti. */}
+      {stats && (
+        <div className="mb-4 p-4 bg-paper border border-ink-line flex items-baseline justify-between gap-4">
+          <div>
+            <p className="kicker mb-1">Avec un résultat réel</p>
+            <p className="text-sm text-ink-soft">
+              Tâches ayant produit un contenu, pas seulement marquées terminées
+            </p>
+          </div>
+          <p className={`font-display text-2xl figures ${
+            (stats.tasks_with_output ?? 0) < (stats.total_tasks ?? 0) ? 'text-warning' : 'text-success'
+          }`}>
+            {stats.tasks_with_output ?? 0}<span className="text-ink-faint"> / {stats.total_tasks}</span>
+          </p>
+        </div>
       )}
 
       {criticalPath && (

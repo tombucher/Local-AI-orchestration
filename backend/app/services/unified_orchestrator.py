@@ -240,6 +240,31 @@ class UnifiedOrchestrator:
             )
             return
 
+        # Une tâche qui n'a RIEN produit ne doit pas être déclarée terminée.
+        # C'est ainsi qu'un projet affichait « toutes les tâches faites » sans le
+        # moindre fichier : la génération échouait en silence et le statut passait
+        # quand même à COMPLETED. On la marque en échec, ce qui la rend visible et
+        # relançable au lieu de mentir sur l'avancement.
+        a_produit = bool((task.generated_code or '').strip()) or bool(task.radar_report)
+        if not a_produit:
+            task.status = TaskStatus.FAILED
+            task.last_failed_at = datetime.utcnow()
+            task.retry_count = (task.retry_count or 0) + 1
+            clear_progress(task.id)
+            await self._log_event(
+                task_id=task.id,
+                event_type=TaskEventType.GENERATION_FAILED,
+                details={
+                    'error': "La génération s'est terminée sans produire de contenu",
+                    'task_type': task.task_type.value,
+                    'retry_count': task.retry_count,
+                },
+            )
+            logger.error(
+                f"❌ Task {task.id} ({task.task_type.value}) n'a produit aucun contenu → FAILED"
+            )
+            return
+
         # Transition vers le bon statut selon le type de tâche :
         # - CODE_GENERATION → MANUAL_REVIEW (le code doit être validé par un humain)
         # - Tous les autres types → COMPLETED (contenu informatif, pas de validation)
@@ -791,6 +816,11 @@ RULES:
             model=model
         )
 
+        if not (document or '').strip():
+            raise RuntimeError(
+                "Le modèle n'a produit aucun document. Essaie un autre modèle dans "
+                "Paramètres, ou précise la description de la tâche."
+            )
         task.generated_code = document
 
     async def _handle_funding_search(self, task: Task) -> None:

@@ -84,6 +84,9 @@ class ProjectStats(BaseModel):
     """Statistiques d'un projet"""
     total_tasks: int
     tasks_by_status: dict[str, int]
+    # Tâches ayant réellement produit un contenu : compter les statuts ne dit rien
+    # de ce qui existe vraiment.
+    tasks_with_output: int = 0
     tasks_by_priority: dict[str, int]
     total_time_seconds: Optional[int] = None
     estimated_cost: Optional[float] = None  # Pour projets PRO

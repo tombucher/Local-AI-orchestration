@@ -73,7 +73,7 @@ Créer un compte via l'interface, puis choisir tes modèles dans **Paramètres**
 ```bash
 docker compose ps                         # état des services
 docker compose logs -f backend            # logs backend
-./run_tests.sh                            # 182 tests backend
+./run_tests.sh                            # 188 tests backend
 docker compose up -d --build backend      # rebuild après changement de dépendances
 docker compose exec backend alembic upgrade head
 ls backups/                               # sauvegardes Postgres quotidiennes (14 jours)
@@ -157,6 +157,7 @@ Isolation par utilisateur sur tous les endpoints, JWT 7 jours, bcrypt, Postgres 
 | Veille sans résultats | `docker compose ps searxng` ; si l'API renvoie 403, vérifier que `json` figure dans `search.formats` de `searxng/settings.yml` puis `docker compose restart searxng` |
 | Veille textuelle pauvre | Ajoute tes flux dans **Paramètres → Mes flux de veille** ; ils sont vérifiés et étiquetés, et passent avant le catalogue par défaut |
 | Moodboard vide ou très peu d'images | Normal si les sources couvrent mal le sujet : renseigne des mots-clés courts et concrets sur le topic (ils servent directement de requêtes) |
+| Projet « terminé » mais rien de produit | Regarde l'indicateur « avec un résultat réel » : il compte les tâches ayant vraiment généré un contenu. Le score de maturité, lui, note la qualité du plan, pas l'avancement |
 | Tâche bloquée en GENERATING | Le watchdog la passe en FAILED après 15 min, puis retry. Attention : toute modification sous `backend/app/` redémarre le serveur et tue les tâches en cours |
 | Moodboard vide | Il se remplit **tout seul** depuis une veille de portée **visuelle** ; une veille d'actualités ne ramène que des liens et n'y contribue pas. Sinon, bouton « Ajouter une image » pour déposer une URL ou un fichier |
 | Erreur « attached to a different loop » dans les tests | Relancer `./run_tests.sh` (moteur de test par fonction) |

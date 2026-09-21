@@ -13,6 +13,7 @@ Tout tourne en local : FastAPI + PostgreSQL dans Docker, React/Vite, Ollama nati
 ### Pilotage
 - Création de projet par **dialogue d'idéation** (streaming SSE) puis finalisation.
 - **Analyse IA** : décomposition en 10-15 tâches avec sous-tâches, priorités, dépendances et veilles suggérées ; création en un clic.
+- **Score de maturité** : il note la qualité du **plan** (dépendances 30 %, descriptions 20 %, échéances 20 %, chemin critique 30 %) et **jamais ce qui a été produit**. L'intitulé et le sous-titre de l'interface le disent explicitement, sans quoi il se lit comme un taux d'avancement.
 - **Chemin critique** (CPM) avec dates projetées et **frise Gantt SVG interactive** (étirer une estimation, créer une dépendance en glissant) ; score de maturité et conseils.
 - Chrono par tâche (widget dans la barre), séries de jours productifs.
 
@@ -49,7 +50,7 @@ Tout tourne en local : FastAPI + PostgreSQL dans Docker, React/Vite, Ollama nati
 - Scheduler (queue toutes les 2 min, veilles toutes les 15 min, watchdog 5 min, rapports 8h), retry avec backoff.
 - **Registre de modèles** : si un modèle Ollama configuré n'existe plus, repli automatique sur un modèle installé ; thinking désactivé par détection de capacités.
 - Design system « journal d'atelier » (papier/encre/vermillon, Fraunces + Archivo), PWA installable.
-- **182 tests** backend (`./run_tests.sh`), sauvegardes Postgres quotidiennes (`./backups/`), rotation des logs.
+- **188 tests** backend (`./run_tests.sh`), sauvegardes Postgres quotidiennes (`./backups/`), rotation des logs.
 
 ## 🔒 Sécurité (audit du 19/09/2026)
 - Isolation par utilisateur sur tous les endpoints ; 401 sans jeton, 404 sur les données d'autrui.
@@ -84,6 +85,8 @@ Les modèles changent souvent : ne jamais coder un nom en dur, passer par `backe
 - Vignettes chargées en `loading="lazy"` masquées en `display:none` : une image masquée n'entre jamais dans le viewport, donc n'est jamais chargée. Squelette superposé plutôt que masquage.
 - **La portée choisie dans le formulaire de veille était ignorée** : elle était enregistrée dans `task_metadata['scope']` mais jamais relue, et l'orchestrateur créait systématiquement un sujet « actualités ». Choisir « Visuelle » n'avait donc aucun effet. La portée décide désormais du pipeline, et un sujet incohérent hérité du bug bascule vers la portée demandée.
 - Tâche « à valider » sans contenu : impasse totale (rien à valider, à rejeter ni à relancer, le type `document_writing` n'étant pas relançable). La relance est autorisée quand il n'y a rien à perdre, et l'interface explique la situation au lieu de n'afficher qu'un en-tête.
+- **Une tâche pouvait être « terminée » sans avoir rien produit** : le projet s'affichait alors comme abouti, toutes tâches faites, sans qu'aucun fichier n'existe. L'orchestrateur ne vérifiait jamais qu'un contenu avait été généré. Il marque désormais la tâche en échec — visible et relançable — et la page l'explique au lieu d'annoncer une réussite.
+- Nouvel indicateur « avec un résultat réel » (`tasks_with_output`) : compter les statuts ne dit rien de ce qui existe.
 - Flux d'actualité obsolètes corrigés : Yale E360 → `/feed.xml`, The Ecologist → `/rss` (les anciennes URL renvoyaient 404) ; Prosthetic Knowledge écarté (blog retiré).
 - Recherche de financements qui renvoyait des datasets data.gouv au lieu d'appels à projets.
 - `GET /tasks/{id}/logs` en 500 ; CORS hardcodé ; ~30 erreurs TypeScript qui cassaient `npm run build`.

@@ -580,11 +580,12 @@ async def generate_task_code(
         # Pour les veilles et tâches autonomes, on accepte aussi COMPLETED/FAILED/CANCELLED
         allowed_statuses |= {TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED}
 
-    # Une tâche « à valider » qui n'a rien produit est une impasse : il n'y a rien
-    # à valider ni à rejeter, et le type ne permettait pas de relancer. On autorise
-    # la relance, puisqu'il n'y a rien à perdre.
-    if task.status == TaskStatus.MANUAL_REVIEW and not (task.generated_code or '').strip():
-        allowed_statuses.add(TaskStatus.MANUAL_REVIEW)
+    # Une tâche arrivée à son terme sans rien produire est une impasse : rien à
+    # valider, rien à rejeter, et son type n'autorisait pas forcément la relance.
+    # On l'autorise, puisqu'il n'y a rien à perdre.
+    if (task.status in (TaskStatus.MANUAL_REVIEW, TaskStatus.COMPLETED)
+            and not (task.generated_code or '').strip() and not task.radar_report):
+        allowed_statuses |= {TaskStatus.MANUAL_REVIEW, TaskStatus.COMPLETED}
 
     if task.status not in allowed_statuses:
         raise HTTPException(
