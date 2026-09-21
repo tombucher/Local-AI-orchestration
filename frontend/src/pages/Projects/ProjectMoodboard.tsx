@@ -199,9 +199,22 @@ export const ProjectMoodboard = () => {
                 {lightbox.description && (
                   <p className="text-sm text-ink-soft mt-1">{lightbox.description}</p>
                 )}
+                {/* Crédit source : Pexels notamment exige un lien visible vers
+                    la plateforme et le nom du photographe. */}
                 <p className="text-[11px] text-ink-faint mt-2">
-                  {lightbox.source_platform}
-                  {lightbox.license && <> · Licence : {lightbox.license}</>}
+                  {lightbox.url ? (
+                    <a
+                      href={lightbox.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline decoration-ink-line hover:text-accent transition-colors"
+                    >
+                      {lightbox.source_platform}
+                    </a>
+                  ) : (
+                    lightbox.source_platform
+                  )}
+                  {lightbox.license && <> · {lightbox.license}</>}
                 </p>
               </div>
               <div className="flex items-center gap-2 shrink-0">

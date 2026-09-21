@@ -73,7 +73,7 @@ Créer un compte via l'interface, puis choisir tes modèles dans **Paramètres**
 ```bash
 docker compose ps                         # état des services
 docker compose logs -f backend            # logs backend
-./run_tests.sh                            # 154 tests backend
+./run_tests.sh                            # 152 tests backend
 docker compose up -d --build backend      # rebuild après changement de dépendances
 docker compose exec backend alembic upgrade head
 ls backups/                               # sauvegardes Postgres quotidiennes (14 jours)
@@ -97,7 +97,7 @@ gunzip -c backups/orchestrator-YYYYMMDD-HHMM.sql.gz | docker compose exec -T pos
 | `AIDES_TERRITOIRES_API_KEY` | Optionnel — aides publiques FR avec deadlines structurées |
 | `SEARXNG_URL`, `SEARXNG_SECRET` | Métamoteur local, **backend de recherche prioritaire** (ni clé ni quota). `SEARXNG_SECRET` : 64 hex |
 | `BRAVE_SEARCH_API_KEY` | Repli optionnel — l'offre gratuite de Brave n'existe plus |
-| `UNSPLASH_ACCESS_KEY`, `PEXELS_API_KEY` | Optionnels — photographies sous licence permissive pour le moodboard ([clés gratuites](https://unsplash.com/developers)) |
+| `PEXELS_API_KEY` | Optionnel — photographies sous licence permissive pour le moodboard ([clé gratuite](https://www.pexels.com/api/)) |
 | `ARENA_ACCESS_TOKEN` | Optionnel — moodboard enrichi des collections Are.na ([jeton gratuit](https://dev.are.na/oauth/applications)) ; images = références, **pas** libres de droits |
 | `NTFY_TOPIC` (+ `NTFY_URL`, `NTFY_TOKEN`) | Optionnel — envoie le briefing de 8h sur le téléphone via l'app ntfy |
 | `APP_PUBLIC_URL` | Optionnel — URL publique (Tailscale) utilisée dans les notifications |

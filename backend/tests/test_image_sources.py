@@ -1,8 +1,12 @@
 """
-Tests des sources d'images à clé (Unsplash, Pexels).
+Tests de la source d'images Pexels.
 
-Les réponses simulées reproduisent les schémas documentés officiellement ; ces
-tests valident donc le mapping des champs, pas la disponibilité des services.
+La réponse simulée reproduit le schéma documenté officiellement ; ces tests
+valident donc le mapping des champs, pas la disponibilité du service.
+
+Unsplash a été retiré : ses règles réservent l'API à des usages « non-automated »
+et imposent de déclencher `links.download_location` à chaque sélection d'image,
+ce qu'une veille programmée ne peut pas honorer.
 """
 
 import pytest
@@ -44,63 +48,6 @@ def _module(payload, status=200):
     m = WebResearchModule()
     m.session = _FausseSession(payload, status)
     return m
-
-
-# ------------------------------------------------------------- Unsplash ----
-
-UNSPLASH_OK = {
-    "results": [{
-        "description": "Vieille imprimante thermique",
-        "alt_description": "imprimante",
-        "urls": {"raw": "r", "full": "f", "regular": "https://u/regular.jpg",
-                 "small": "https://u/small.jpg", "thumb": "https://u/thumb.jpg"},
-        "links": {"html": "https://unsplash.com/photos/abc"},
-        "user": {"name": "Jeanne Dupont"},
-    }]
-}
-
-
-@pytest.mark.asyncio
-async def test_unsplash_mapping(monkeypatch):
-    from app.services.modules import web_research as wr
-    monkeypatch.setattr(wr.app_settings, "UNSPLASH_ACCESS_KEY", "cle-factice", raising=False)
-
-    m = _module(UNSPLASH_OK)
-    res = await m.search_unsplash("imprimante thermique")
-
-    assert len(res) == 1
-    img = res[0]
-    assert img["title"] == "Vieille imprimante thermique"
-    assert img["thumbnail_url"] == "https://u/small.jpg"
-    assert img["image_url"] == "https://u/regular.jpg"
-    assert img["url"] == "https://unsplash.com/photos/abc"
-    assert img["source_platform"] == "Unsplash"
-    assert "Jeanne Dupont" in img["license"]
-    # L'authentification Unsplash se fait par « Client-ID », pas « Bearer »
-    _, kwargs = m.session.dernier_appel
-    assert kwargs["headers"]["Authorization"] == "Client-ID cle-factice"
-
-
-@pytest.mark.asyncio
-async def test_unsplash_sans_cle_ignore():
-    from app.services.modules import web_research as wr
-    original = wr.app_settings.UNSPLASH_ACCESS_KEY
-    wr.app_settings.UNSPLASH_ACCESS_KEY = ""
-    try:
-        assert await _module(UNSPLASH_OK).search_unsplash("x") == []
-    finally:
-        wr.app_settings.UNSPLASH_ACCESS_KEY = original
-
-
-@pytest.mark.asyncio
-async def test_unsplash_cle_refusee(monkeypatch, caplog):
-    import logging
-    from app.services.modules import web_research as wr
-    monkeypatch.setattr(wr.app_settings, "UNSPLASH_ACCESS_KEY", "mauvaise", raising=False)
-
-    with caplog.at_level(logging.ERROR):
-        assert await _module({}, status=401).search_unsplash("x") == []
-    assert "UNSPLASH_ACCESS_KEY" in caplog.text
 
 
 # --------------------------------------------------------------- Pexels ----
@@ -154,3 +101,13 @@ async def test_photo_sans_url_ignoree(monkeypatch):
     monkeypatch.setattr(wr.app_settings, "PEXELS_API_KEY", "cle", raising=False)
 
     assert await _module({"photos": [{"id": 1, "src": {}}]}).search_pexels("x") == []
+
+
+def test_unsplash_absent():
+    """Garde-fou : l'API Unsplash est réservée aux usages « non-automated » et
+    impose un appel à `links.download_location` à chaque sélection. Une veille
+    programmée ne peut pas s'y conformer — ne pas la réintroduire."""
+    from app.services.modules.web_research import WebResearchModule
+
+    assert not hasattr(WebResearchModule, "search_unsplash")
+    assert not hasattr(WebResearchModule, "UNSPLASH_SEARCH")
