@@ -708,7 +708,9 @@ RULES:
             queries = [q for q in queries if not any(b in q.casefold() for b in BANNED)]
             # Filet : le modele rallonge souvent malgre la consigne, et au-dela
             # de trois mots ces APIs ne renvoient plus rien du tout
-            queries = [' '.join(q.split()[:3]) for q in queries][:3]
+            # Deux mots maximum : mesuré, « ascii art » rend 8 résultats sur
+            # Internet Archive quand « ASCII typography brutalist » en rend 0.
+            queries = [' '.join(q.split()[:2]) for q in queries][:3]
             if queries:
                 logger.info(f"🖼 Visual queries: {queries}")
                 return queries

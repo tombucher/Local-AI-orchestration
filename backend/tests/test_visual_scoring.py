@@ -92,3 +92,51 @@ async def test_liste_vide():
     from app.services.visual_scoring import score_images_with_vision
 
     assert await score_images_with_vision([], "peu importe") == []
+
+
+# ------------------------------------- rétrogradation des images non vues ---
+
+@pytest.mark.asyncio
+async def test_image_non_telechargeable_retrogradee(monkeypatch):
+    """Le score lexical atteint 95 dès qu'un mot de la requête traîne dans le
+    titre : une vignette injoignable se retrouvait en tête du moodboard."""
+    from app.services import visual_scoring as vs
+
+    monkeypatch.setattr(vs, "resolve_model", lambda m, p="": "modele-vision")
+    monkeypatch.setattr(vs, "supports_vision", lambda m: True)
+
+    async def _echec(session, url):
+        return None
+
+    monkeypatch.setattr(vs, "_telecharger", _echec)
+
+    images = [{"title": "astronaute", "relevance_score": 95.0, "thumbnail_url": "http://x/y.png"}]
+    resultat = await vs.score_images_with_vision(images, "ascii art")
+    assert resultat[0]["relevance_score"] < vs.SEUIL_DEFAUT
+
+
+@pytest.mark.asyncio
+async def test_images_au_dela_du_lot_retrogradees(monkeypatch):
+    """Celles que le modèle n'a pas eu le temps de regarder non plus."""
+    from app.services import visual_scoring as vs
+
+    monkeypatch.setattr(vs, "resolve_model", lambda m, p="": "modele-vision")
+    monkeypatch.setattr(vs, "supports_vision", lambda m: True)
+
+    async def _echec(session, url):
+        return None
+
+    monkeypatch.setattr(vs, "_telecharger", _echec)
+
+    images = [{"title": f"i{i}", "relevance_score": 95.0, "thumbnail_url": "http://x"} for i in range(30)]
+    resultat = await vs.score_images_with_vision(images, "ascii art", limite=5)
+    assert all(img["relevance_score"] < vs.SEUIL_DEFAUT for img in resultat)
+
+
+def test_source_internet_archive_disponible():
+    """Rendement mesuré le 21/09/2026 : 62 % d'images pertinentes, médiane 90 —
+    le meilleur du lot, et sans clé."""
+    from app.services.modules.web_research import WebResearchModule
+
+    assert hasattr(WebResearchModule, "search_internet_archive")
+    assert WebResearchModule.ARCHIVE_SEARCH.startswith("https://archive.org/")

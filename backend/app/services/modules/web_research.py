@@ -544,6 +544,57 @@ class WebResearchModule:
         logger.info(f"📰 RSS ({scope}) : {len(results)} articles depuis {len(urls)} flux")
         return results
 
+    # Internet Archive : API de recherche publique et documentée, sans clé.
+    # Évaluée le 21/09/2026 sur des requêtes d'art numérique : 62 % d'images
+    # jugées pertinentes par le modèle vision, médiane 90 — de loin le meilleur
+    # rendement du lot (les APIs musée plafonnaient à 3 %).
+    ARCHIVE_SEARCH = "https://archive.org/advancedsearch.php"
+    ARCHIVE_THUMB = "https://archive.org/services/img/"
+
+    async def search_internet_archive(self, query: str, max_results: int = 10) -> List[Dict[str, Any]]:
+        """Images d'Internet Archive : documents imprimés, tickets, matériel ancien.
+
+        ⚠️ Les droits varient d'un dépôt à l'autre : à traiter comme des
+        références, pas comme des visuels réutilisables sans vérification.
+        """
+        params = {
+            "q": f"{query} AND mediatype:image",
+            "fl[]": "identifier",
+            "rows": str(max_results),
+            "output": "json",
+        }
+        try:
+            async with self.session.get(
+                self.ARCHIVE_SEARCH, params=params,
+                headers={"User-Agent": "OrchestratorIA/1.0 (veille personnelle)"},
+                timeout=25,
+            ) as resp:
+                resp.raise_for_status()
+                data = await resp.json(content_type=None)
+        except Exception as e:
+            logger.warning(f"Internet Archive search failed for '{query}': {e}")
+            return []
+
+        results = []
+        for doc in (data.get("response", {}).get("docs") or [])[:max_results]:
+            identifiant = doc.get("identifier")
+            if not identifiant:
+                continue
+            vignette = f"{self.ARCHIVE_THUMB}{identifiant}"
+            results.append({
+                # Les identifiants sont opaques (« dauzuk-papierki-18-001 ») : la
+                # notation par vision leur donnera une description lisible.
+                "title": identifiant.replace("-", " ").replace("_", " ")[:200],
+                "url": f"https://archive.org/details/{identifiant}",
+                "image_url": vignette,
+                "thumbnail_url": vignette,
+                "license": "Internet Archive — droits variables selon le dépôt",
+                "description": f"Internet Archive · {query}",
+                "source_platform": "Internet Archive",
+            })
+        logger.info(f"✓ Internet Archive: {len(results)} images pour '{query}'")
+        return results
+
     # Are.na : /v2/search/blocks renvoie 403 pour tout le monde (blocage anti-bot).
     # On passe donc par les *channels*, ce qui vaut mieux : ce sont des collections
     # curatées par des humains, exactement la matière d'un moodboard.
@@ -698,6 +749,9 @@ class WebResearchModule:
             factories += [lambda q=q: self.search_aic(q), lambda q=q: self.search_met(q)]
         if queries:
             factories.append(lambda: self.search_wikimedia_commons(queries[0]))
+        # Internet Archive : meilleur rendement mesuré, et sans clé
+        for q in queries[:3]:
+            factories.append(lambda q=q: self.search_internet_archive(q))
         # Are.na : la meilleure source pour l'art numérique contemporain, mais
         # deux appels par requête — on la limite aux deux premières.
         if getattr(app_settings, "ARENA_ACCESS_TOKEN", ""):

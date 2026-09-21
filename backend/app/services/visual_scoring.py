@@ -95,8 +95,11 @@ async def score_images_with_vision(
     """Note les images en les regardant, et renseigne `vision_description`.
 
     `recherche` décrit en une phrase ce que le moodboard cherche.
-    Les images non notées (téléchargement ou modèle en échec) gardent leur score
-    lexical : mieux vaut un tri imparfait qu'une image perdue.
+
+    Une image que le modèle n'a pas pu regarder est **rétrogradée** juste sous le
+    seuil : son score lexical vaut 95 dès qu'un mot de la requête traîne dans son
+    titre, si bien qu'une simple vignette injoignable se retrouvait en tête du
+    moodboard. Mieux vaut l'écarter que la présenter comme une trouvaille.
     """
     if not images:
         return images
@@ -123,9 +126,13 @@ async def score_images_with_vision(
     prompt = GABARIT_PROMPT.format(recherche=recherche[:400])
     notees = echecs = 0
 
+    def _retrograder(image: Dict[str, Any]) -> None:
+        image["relevance_score"] = min(image.get("relevance_score", 0.0), SEUIL_DEFAUT - 1)
+
     # Séquentiel : Ollama sérialise de toute façon les requêtes sur un même modèle
     for img, octets in zip(lot, octets_par_image):
         if not octets:
+            _retrograder(img)
             echecs += 1
             continue
         try:
@@ -147,7 +154,12 @@ async def score_images_with_vision(
                 img["vision_description"] = resultat["description"]
             notees += 1
         else:
+            _retrograder(img)
             echecs += 1
+
+    # Les images au-delà du lot n'ont pas été examinées non plus
+    for img in images[limite:]:
+        _retrograder(img)
 
     logger.info(f"👁 Notation visuelle : {notees} images notées par {modele}"
                 + (f", {echecs} non notées (score lexical conservé)" if echecs else ""))
