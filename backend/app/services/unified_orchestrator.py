@@ -201,7 +201,6 @@ class UnifiedOrchestrator:
         # Update status
         task.status = TaskStatus.GENERATING
         task.started_at = datetime.utcnow()
-        await self.db.flush()
 
         # Log start
         await self._log_event(
@@ -209,6 +208,10 @@ class UnifiedOrchestrator:
             event_type=TaskEventType.CODE_GENERATION_STARTED,
             details={'task_type': task.task_type.value}
         )
+        # Validé tout de suite : lancée par le planificateur, la tâche restait
+        # affichée « prête » pendant tout son traitement (un quart d'heure pour
+        # une veille), le lot n'étant validé qu'à la fin — elle semblait bloquée.
+        await self.db.commit()
 
         # Dispatch selon le type
         if task.task_type == TaskType.CODE_GENERATION:

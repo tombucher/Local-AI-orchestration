@@ -67,3 +67,13 @@ def test_le_score_de_maturite_ne_mesure_pas_l_avancement():
     source = inspect.getsource(MaturityService.calculate_maturity_score)
     assert "dependencies_score" in source and "critical_path_score" in source
     assert "generated_code" not in source
+
+
+def test_statut_en_cours_visible_des_le_demarrage():
+    """Lancée par le planificateur, une tâche restait affichée « prête » pendant
+    tout son traitement : le passage à GENERATING doit être validé aussitôt."""
+    from app.services.unified_orchestrator import UnifiedOrchestrator
+
+    source = inspect.getsource(UnifiedOrchestrator.handle_task)
+    debut = source.index("TaskStatus.GENERATING")
+    assert "await self.db.commit()" in source[debut:source.index("# Dispatch")]
