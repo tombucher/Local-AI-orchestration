@@ -37,6 +37,7 @@ from app.services.project_workspace import build_workspace_context
 from app.services.project_memory import build_project_memory, score_against_memory
 from app.services.task_progress import clear_progress, set_progress
 from app.services.project_documents import build_document_context
+from app.services.task_chain import brief_without_checklist, build_upstream_context, checklist_items
 from app.services.visual_scoring import score_images_with_vision, titre_illisible
 
 logger = logging.getLogger(__name__)
@@ -309,11 +310,16 @@ class UnifiedOrchestrator:
             include_images=supports_vision(model),
         )
 
+        # Textes rédigés en amont (contenus de page, note d'intention…) : le code
+        # des dépendances arrive déjà par le plan de fichiers.
+        upstream = await build_upstream_context(self.db, task, skip_code=True)
+        reference = "\n\n".join(part for part in (upstream, documents.text) if part)
+
         set_progress(task.id, "generation", f"Génération du code par {model}…")
         code = await self.llm_client.generate_code(
             task, model_override=model,
             workspace_context=workspace.text,
-            document_context=documents.text or None,
+            document_context=reference or None,
             images=documents.images or None,
         )
         task.generated_code = code
@@ -799,17 +805,34 @@ RULES:
         model = await self._get_text_model(project.user_id)
 
         metadata = task.task_metadata or {}
-        sections = metadata.get('sections', [
-            {"name": "Introduction", "max_words": 200},
-            {"name": "Contenu principal", "max_words": 500},
-            {"name": "Conclusion", "max_words": 150}
-        ])
+        # Les sous-tâches cochables deviennent le plan du document
+        items = checklist_items(task.description)
+        sections = metadata.get('sections') or (
+            [{"name": item, "max_words": 250} for item in items] if len(items) >= 2 else [
+                {"name": "Introduction", "max_words": 200},
+                {"name": "Contenu principal", "max_words": 500},
+                {"name": "Conclusion", "max_words": 150}
+            ]
+        )
 
+        set_progress(task.id, "context", "Lecture des résultats des tâches précédentes…")
+        upstream = await build_upstream_context(self.db, task)
+        documents = await build_document_context(
+            self.db, project.id,
+            objective=f"{task.title} {task.description or ''}",
+            include_images=False,
+        )
+
+        set_progress(task.id, "generation", f"Rédaction par {model}…")
         document = await self.doc_generator.generate_document(
-            document_type=metadata.get('document_type', 'generic'),
+            document_type=metadata.get('document_type') or task.title,
             context={
                 'project_name': project.name,
                 'project_description': project.description,
+                'task_title': task.title,
+                'task_brief': brief_without_checklist(task.description),
+                'upstream': upstream,
+                'documents': documents.text,
                 **metadata.get('context', {})
             },
             sections=sections,
@@ -976,7 +999,9 @@ RULES:
 
         # Enrichit le llm_prompt avec des instructions spécifiques research
         original_prompt = task.llm_prompt or task.description or task.title
+        upstream = await build_upstream_context(self.db, task)
         task.llm_prompt = f"""{original_prompt}
+{chr(10) + upstream + chr(10) if upstream else ''}
 
 INSTRUCTIONS SUPPLÉMENTAIRES:
 Génère un plan de recherche structuré avec:
@@ -1000,8 +1025,9 @@ Sois concret et actionnable. Format Markdown."""
         model = await self._get_text_model(project.user_id)
 
         original_prompt = task.llm_prompt or task.description or task.title
+        upstream = await build_upstream_context(self.db, task)
         task.llm_prompt = f"""{original_prompt}
-
+{chr(10) + upstream + chr(10) if upstream else ''}
 INSTRUCTIONS SUPPLÉMENTAIRES:
 Génère une checklist administrative détaillée avec:
 1. Résumé de la tâche (une phrase)

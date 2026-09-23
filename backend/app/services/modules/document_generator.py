@@ -63,6 +63,8 @@ class DocumentGeneratorModule:
                 options={
                     'temperature': 0.7,
                     'num_predict': max_tokens,
+                    # Le contexte amont (veille, recherche) dépasse vite les 4096 par défaut
+                    'num_ctx': 16384,
                 },
                 # Désactive le mode thinking (qwen3.x) — sinon la réponse
                 # part dans le champ thinking et le document sort vide

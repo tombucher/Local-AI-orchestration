@@ -338,8 +338,20 @@ Fournis une analyse structurée et actionnable.
             parts.append(f"**Organisation:** {context['organization']}")
         if context.get('project_name'):
             parts.append(f"**Projet:** {context['project_name']}")
+        if context.get('project_description'):
+            parts.append(f"**Description du projet:** {context['project_description'].strip()}")
         if context.get('target_audience'):
             parts.append(f"**Audience cible:** {context['target_audience']}")
+        # Sans la consigne de la tâche, deux documents d'un même projet (note
+        # d'intention, rapport…) sortaient identiques et génériques.
+        if context.get('task_title'):
+            parts.append(f"**Document demandé:** {context['task_title']}")
+        if context.get('task_brief'):
+            parts.append(f"**Consigne:** {context['task_brief']}")
+        if context.get('documents'):
+            parts.append(f"\n{context['documents']}")
+        if context.get('upstream'):
+            parts.append(f"\n{context['upstream']}")
 
         return "\n".join(parts)
 
