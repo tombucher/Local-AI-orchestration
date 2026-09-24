@@ -358,3 +358,43 @@ async def test_get_task_logs(client: AsyncClient, auth_headers: dict):
     logs = response.json()
     assert len(logs) >= 2  # Au moins: created + status_changed
     assert logs[0]["event_type"] == "created"
+
+
+def test_reponse_accepte_les_dependances_orm():
+    """task.__dict__ porte la relation chargée : des objets Task, pas des IDs."""
+    from types import SimpleNamespace
+    from datetime import datetime, timezone
+    from app.schemas.task import TaskResponse
+
+    reponse = TaskResponse(
+        id=2, project_id=1, title="Note", status="created", created_at=datetime.now(timezone.utc),
+        dependencies=[SimpleNamespace(id=7), SimpleNamespace(id=9)],
+    )
+    assert reponse.dependencies == [7, 9]
+    assert TaskResponse(id=2, project_id=1, title="N", status="created",
+                        created_at=datetime.now(timezone.utc), dependencies=None).dependencies == []
+
+
+@pytest.mark.asyncio
+async def test_generer_une_tache_avec_dependances(client, auth_headers, monkeypatch):
+    """/generate répondait 500 pour toute tâche ayant des dépendances."""
+    from app.api.v1 import tasks as tasks_api
+
+    async def sans_generation(task_id):  # ne jamais toucher la vraie base
+        return None
+    monkeypatch.setattr(tasks_api, "_generate_code_background", sans_generation)
+
+    projet = (await client.post("/api/v1/projects/", json={
+        "name": "Deps", "type": "personal", "features": {"code_gen": True},
+    }, headers=auth_headers)).json()["id"]
+    amont = (await client.post("/api/v1/tasks/", json={
+        "project_id": projet, "title": "Structure HTML", "priority": "P2",
+    }, headers=auth_headers)).json()["id"]
+    aval = (await client.post("/api/v1/tasks/", json={
+        "project_id": projet, "title": "Styles CSS", "priority": "P2", "dependency_ids": [amont],
+    }, headers=auth_headers)).json()["id"]
+
+    r = await client.post(f"/api/v1/tasks/{aval}/generate", headers=auth_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "generating"
+    assert r.json()["dependencies"] == [amont]

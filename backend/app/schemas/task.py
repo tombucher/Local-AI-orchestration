@@ -3,7 +3,7 @@ Pydantic schemas for Tasks
 """
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.models.task import TaskPriority, TaskStatus, TaskType
 
@@ -77,6 +77,20 @@ class TaskResponse(TaskBase):
     # Avancement d'une tâche en cours (registre mémoire, pas en base) :
     # {phase, label, current, total, percent}. None quand rien ne tourne.
     progress: Optional[dict] = None
+
+    @field_validator("dependencies", mode="before")
+    @classmethod
+    def _ids_des_dependances(cls, value):
+        """Accepte la relation ORM telle quelle.
+
+        Les routes construisent la réponse depuis `task.__dict__` : dès que la
+        relation `dependencies` est chargée, elle contient des objets Task et non
+        des IDs. /generate renvoyait alors une 500 — alors que la génération
+        était bel et bien lancée.
+        """
+        if not value:
+            return []
+        return [getattr(dep, "id", dep) for dep in value]
 
     class Config:
         from_attributes = True
