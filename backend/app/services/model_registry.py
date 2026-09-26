@@ -23,6 +23,10 @@ _LIST_TTL_SECONDS = 60
 _list_cache: Dict[str, Any] = {"ts": 0.0, "models": []}
 _caps_cache: Dict[str, set] = {}
 _warned_missing: set = set()
+# Modèles cloud d'Ollama (champ `remote_host`) : exécutés sur ollama.com, ils
+# enverraient les projets hors de la machine. L'orchestrateur est strictement
+# local : ils ne sont ni proposés, ni utilisés, même choisis explicitement.
+_cloud_names: set = set()
 
 
 def _client() -> ollama.Client:
@@ -53,6 +57,9 @@ def list_local_models_detailed(force: bool = False) -> List[Dict[str, Any]]:
             name = _field(m, "model", "name")
             if not name:
                 continue
+            if _field(m, "remote_host") or looks_like_cloud(name):
+                _cloud_names.add(name)
+                continue
             models.append({
                 "name": name,
                 "size": _field(m, "size") or 0,
@@ -65,13 +72,23 @@ def list_local_models_detailed(force: bool = False) -> List[Dict[str, Any]]:
         return _list_cache["models"]
 
 
+def looks_like_cloud(name: Optional[str]) -> bool:
+    """`deepseek-v4-flash:cloud`, `gpt-oss:120b-cloud`… : le tag trahit un modèle distant."""
+    tag = (name or "").lower().partition(":")[2]
+    return "cloud" in tag
+
+
+def is_cloud_model(name: Optional[str]) -> bool:
+    return bool(name) and (name in _cloud_names or looks_like_cloud(name))
+
+
 def list_local_models(force: bool = False) -> List[str]:
     return [m["name"] for m in list_local_models_detailed(force)]
 
 
 def _is_usable_for_fallback(name: str) -> bool:
     lowered = name.lower()
-    return "embed" not in lowered and ":cloud" not in lowered
+    return "embed" not in lowered and not is_cloud_model(name)
 
 
 def _matches(preferred: str, installed: List[str]) -> Optional[str]:
@@ -94,19 +111,29 @@ def resolve_model(preferred: Optional[str], purpose: str = "") -> str:
     à l'appel).
     """
     preferred = preferred or settings.OLLAMA_MODEL_CODE
-    installed = list_local_models()
-    if not installed:
-        return preferred
+    installed = list_local_models()  # modèles cloud déjà exclus
 
-    match = _matches(preferred, installed)
-    if match:
-        return match
+    if is_cloud_model(preferred):
+        if ("cloud", preferred) not in _warned_missing:
+            _warned_missing.add(("cloud", preferred))
+            logger.warning(
+                f"🔒 Modèle cloud '{preferred}' refusé{f' ({purpose})' if purpose else ''} : "
+                "l'orchestrateur ne fait rien sortir de la machine. Repli sur un modèle local."
+            )
+        if not installed:
+            return settings.OLLAMA_MODEL_CODE
+    elif not installed:
+        return preferred
+    else:
+        match = _matches(preferred, installed)
+        if match:
+            return match
 
     candidates = [m for m in installed if _is_usable_for_fallback(m)] or installed
     fallback = _matches(settings.OLLAMA_MODEL_CODE, candidates) or candidates[0]
 
     key = (preferred, fallback)
-    if key not in _warned_missing:
+    if key not in _warned_missing and not is_cloud_model(preferred):
         _warned_missing.add(key)
         logger.warning(
             f"⚠️ Modèle '{preferred}' introuvable dans Ollama"
