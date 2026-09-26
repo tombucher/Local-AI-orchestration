@@ -2,7 +2,7 @@
 Scheduler pour l'exécution périodique des tâches d'orchestration
 """
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
@@ -12,7 +12,8 @@ from app.core.database import AsyncSessionLocal
 from app.core.logging import set_correlation_id
 from app.services.unified_orchestrator import UnifiedOrchestrator
 from app.services.notifier import notify_briefing
-from app.services.daily_review_service import DailyReviewService
+from app.services import briefing
+from app.services.task_progress import clear_progress, is_running
 from app.models.user import User
 from app.models.task import Task, TaskType, TaskStatus
 from app.models.task_log import TaskLog, TaskEventType
@@ -24,6 +25,11 @@ logger = logging.getLogger(__name__)
 
 # Instance globale du scheduler
 scheduler = AsyncIOScheduler()
+
+# Chien de garde : délai avant de déclarer morte une tâche absente du processus
+# (le temps qu'elle démarre), et durée maximale d'une tâche vivante.
+WATCHDOG_GRACE = timedelta(minutes=2)
+WATCHDOG_MAX_RUNTIME = timedelta(hours=2)
 
 
 async def process_queue_job() -> None:
@@ -49,70 +55,39 @@ async def process_queue_job() -> None:
 
 async def generate_daily_reports_job() -> None:
     """
-    Job APScheduler : génère les rapports quotidiens pour tous les utilisateurs actifs
+    Job APScheduler : briefing du jour pour chaque utilisateur actif.
 
-    Exécuté chaque matin à 8h00
+    Exécuté chaque matin à BRIEFING_HOUR (fuseau TIMEZONE), et rattrapé au réveil
+    du Mac si l'heure est passée pendant sa veille.
     """
     set_correlation_id()  # Correlation ID unique par job
     logger.info("📊 Running scheduled job: generate_daily_reports")
-    today = date.today()
 
     async with AsyncSessionLocal() as db:
         try:
-            # Récupérer tous les utilisateurs actifs
-            query = select(User).where(User.is_active == True)
-            result = await db.execute(query)
-            users = result.scalars().all()
-
+            users = (await db.execute(select(User).where(User.is_active == True))).scalars().all()
             logger.info(f"Generating daily reports for {len(users)} active users")
 
             reports_generated = 0
             for user in users:
+                # Déjà en préparation depuis l'ouverture de l'outil
+                if briefing.is_preparing(user.id):
+                    continue
+                briefing._en_preparation.add(user.id)
                 try:
-                    # Vérifier si un rapport existe déjà pour aujourd'hui
-                    existing_query = select(DailyReportModel).where(
-                        DailyReportModel.user_id == user.id,
-                        DailyReportModel.date == today
-                    )
-                    existing_result = await db.execute(existing_query)
-                    existing_report = existing_result.scalar_one_or_none()
-
-                    if existing_report:
+                    _, report = await briefing.build_and_store_report(db, user.id)
+                    if report is None:
                         logger.info(f"Report already exists for user {user.id}, skipping")
                         continue
-
-                    # Générer le rapport
-                    service = DailyReviewService(db)
-                    report = await service.generate_daily_report(user.id)
-
-                    # Stocker en BDD
-                    report_db = DailyReportModel(
-                        user_id=report.user_id,
-                        date=report.date.date(),
-                        summary=report.summary,
-                        total_projects=report.total_projects,
-                        active_projects=report.active_projects,
-                        total_tasks=report.total_tasks,
-                        completed_today=report.completed_today,
-                        blockers_count=report.blockers_count,
-                        projects_analysis=[p.dict() for p in report.projects],
-                        top_priorities=report.top_priorities,
-                        recommendations=report.recommendations,
-                    )
-
-                    db.add(report_db)
-                    await db.commit()
-
                     reports_generated += 1
-                    logger.info(f"✅ Generated daily report for user {user.id} ({user.email})")
-
+                    logger.info(f"✅ Generated daily report for user {user.id}")
                     # Push du briefing sur le téléphone (si NTFY_TOPIC configuré)
                     await notify_briefing(report)
-
                 except Exception as e:
+                    await db.rollback()
                     logger.error(f"❌ Error generating report for user {user.id}: {e}", exc_info=True)
-                    # Continue avec les autres utilisateurs même en cas d'erreur
-                    continue
+                finally:
+                    briefing._en_preparation.discard(user.id)
 
             logger.info(f"✅ Daily reports job completed: {reports_generated}/{len(users)} reports generated")
 
@@ -209,59 +184,60 @@ async def check_veille_recurrence_job() -> None:
 
 async def watchdog_generating_tasks_job() -> None:
     """
-    Job APScheduler : détecte les tâches bloquées en GENERATING depuis trop longtemps
-    et les remet en FAILED pour permettre un retry.
+    Job APScheduler : débloque les tâches GENERATING qui ne tournent plus.
 
-    Seuil : 15 minutes (une génération normale prend 3-5 min max).
+    Une tâche est morte si elle ne vit plus dans ce processus (serveur redémarré
+    pendant qu'elle tournait) : débloquée après un court délai de grâce. Une
+    tâche vivante n'est interrompue qu'au-delà d'un plafond — une veille prend
+    couramment 15 à 20 minutes, l'ancien seuil fixe de 15 min l'aurait tuée.
+
+    L'ancienne version plantait à chaque passage (dates avec et sans fuseau) :
+    aucune tâche coincée n'était jamais débloquée.
     """
     set_correlation_id()  # Correlation ID unique par job
     logger.info("🐕 Running scheduled job: watchdog_generating_tasks")
 
     async with AsyncSessionLocal() as db:
         try:
-            cutoff = datetime.utcnow() - timedelta(minutes=15)
+            now = datetime.now(timezone.utc)
+            generating = (await db.execute(
+                select(Task).where(Task.status == TaskStatus.GENERATING)
+            )).unique().scalars().all()
 
-            # Trouver les tâches bloquées en GENERATING depuis > 15 min
-            stmt = (
-                select(Task)
-                .where(
-                    and_(
-                        Task.status == TaskStatus.GENERATING,
-                        Task.started_at != None,  # noqa: E711
-                        Task.started_at <= cutoff,
-                    )
-                )
-            )
-            result = await db.execute(stmt)
-            stuck_tasks = result.scalars().all()
+            stuck = []
+            for task in generating:
+                started = task.started_at or now
+                if started.tzinfo is None:
+                    started = started.replace(tzinfo=timezone.utc)
+                elapsed = now - started
+                if not is_running(task.id) and elapsed > WATCHDOG_GRACE:
+                    stuck.append((task, elapsed, "interrompue : le serveur a redémarré pendant la génération"))
+                elif elapsed > WATCHDOG_MAX_RUNTIME:
+                    stuck.append((task, elapsed, "trop longue : le modèle ne répond plus"))
 
-            if not stuck_tasks:
+            if not stuck:
                 logger.info("✅ No stuck GENERATING tasks found")
                 return
 
-            for task in stuck_tasks:
-                elapsed = datetime.utcnow() - task.started_at
-                logger.warning(
-                    f"⚠️ Task {task.id} stuck in GENERATING for {elapsed.total_seconds()/60:.1f} min — marking FAILED"
-                )
+            for task, elapsed, raison in stuck:
+                minutes = elapsed.total_seconds() / 60
+                logger.warning(f"⚠️ Task {task.id} {raison} ({minutes:.0f} min) — marking FAILED")
                 task.status = TaskStatus.FAILED
                 task.retry_count = (task.retry_count or 0) + 1
-                task.last_failed_at = datetime.utcnow()
-
-                # Log l'événement
-                log = TaskLog(
+                task.last_failed_at = now
+                clear_progress(task.id)
+                db.add(TaskLog(
                     task_id=task.id,
                     event_type=TaskEventType.GENERATION_FAILED,
                     details={
-                        'error': f'Watchdog: task stuck in GENERATING for {elapsed.total_seconds()/60:.1f} minutes',
+                        'error': f"Génération {raison} ({minutes:.0f} min). Relance-la.",
                         'error_type': 'WatchdogTimeout',
                         'retry_count': task.retry_count,
                     }
-                )
-                db.add(log)
+                ))
 
             await db.commit()
-            logger.info(f"🐕 Watchdog: reset {len(stuck_tasks)} stuck tasks to FAILED")
+            logger.info(f"🐕 Watchdog: reset {len(stuck)} stuck tasks to FAILED")
 
         except Exception as e:
             logger.error(f"❌ Watchdog job failed: {e}", exc_info=True)
@@ -288,13 +264,18 @@ def start_scheduler() -> None:
     )
 
     # Job 2: Génération des rapports quotidiens à 8h00
+    # Heure locale de l'utilisateur, pas UTC. misfire_grace_time : un Mac en
+    # veille à l'heure dite rattrape le briefing à son réveil (la tolérance par
+    # défaut d'une seconde le faisait sauter).
     scheduler.add_job(
         generate_daily_reports_job,
-        trigger=CronTrigger(hour=8, minute=0),  # Chaque jour à 8h00
+        trigger=CronTrigger(hour=settings.BRIEFING_HOUR, minute=0, timezone=briefing.local_tz()),
         id='daily_reports',
         name='Generate daily reports',
         replace_existing=True,
-        max_instances=1
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=14 * 3600,
     )
 
     # Job 3: Vérification de la récurrence des veilles (toutes les 15 min)
@@ -314,14 +295,17 @@ def start_scheduler() -> None:
         id='watchdog_generating',
         name='Watchdog: unstick GENERATING tasks',
         replace_existing=True,
-        max_instances=1
+        max_instances=1,
+        # Premier passage peu après le démarrage : c'est justement après un
+        # redémarrage que des tâches restent coincées.
+        next_run_time=datetime.now(timezone.utc) + WATCHDOG_GRACE + timedelta(seconds=30),
     )
 
     scheduler.start()
     logger.info(
         f"🚀 Scheduler started\n"
         f"   - Task queue processing: every {settings.ORCHESTRATOR_INTERVAL_MINUTES} min\n"
-        f"   - Daily reports: every day at 8:00 AM\n"
+        f"   - Daily reports: every day at {settings.BRIEFING_HOUR}:00 ({settings.TIMEZONE})\n"
         f"   - Veille recurrence check: every 15 min\n"
         f"   - Watchdog (stuck tasks): every 5 min"
     )

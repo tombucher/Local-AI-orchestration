@@ -76,3 +76,23 @@ def get_progress(task_id: int) -> Optional[Dict[str, Any]]:
 def clear_progress(task_id: int) -> None:
     """À appeler quand la tâche atteint un état terminal."""
     _progress.pop(task_id, None)
+
+
+# --- Tâches réellement en cours dans CE processus ----------------------------
+# Une tâche GENERATING en base mais absente d'ici est morte : le serveur a
+# redémarré (rechargement, crash) pendant qu'elle tournait. Le chien de garde
+# s'en sert pour la débloquer sans attendre, tout en laissant finir une veille
+# longue mais vivante.
+_running: Dict[int, float] = {}
+
+
+def task_started(task_id: int) -> None:
+    _running[task_id] = time.time()
+
+
+def task_finished(task_id: int) -> None:
+    _running.pop(task_id, None)
+
+
+def is_running(task_id: int) -> bool:
+    return task_id in _running

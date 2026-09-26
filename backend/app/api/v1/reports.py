@@ -13,6 +13,7 @@ from app.api.deps import get_current_user
 from app.models.user import User
 from app.models.daily_report import DailyReport as DailyReportModel
 from app.services.notifier import notify_briefing
+from app.services import briefing
 from app.services.daily_review_service import DailyReviewService, DailyReport, ProjectStatus
 from pydantic import BaseModel, Field
 
@@ -235,6 +236,20 @@ db: AsyncSession = Depends(get_db)
     )
 
 
+@router.post("/daily/ensure")
+async def ensure_daily_report(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Appelé à l'ouverture de l'outil : prépare le briefing du jour s'il manque.
+
+    Répond aussitôt — la préparation (plusieurs minutes avec un modèle local)
+    se fait en arrière-plan ; le frontend réinterroge /daily/latest.
+    """
+    return {"state": await briefing.ensure_today_report(db, current_user.id),
+            "today": briefing.today_local().isoformat()}
+
+
 @router.post("/daily/generate", response_model=DailyReportResponse)
 async def generate_daily_report(
     notify: bool = Query(False, description="Envoyer aussi le briefing via ntfy"),
@@ -246,46 +261,9 @@ async def generate_daily_report(
 
     En production, ce sera déclenché automatiquement par le scheduler à 8h.
     """
-    # Vérifier si un rapport existe déjà pour aujourd'hui
-    today = date.today()
-    existing_query = select(DailyReportModel).where(
-        and_(
-            DailyReportModel.user_id == current_user.id,
-            DailyReportModel.date == today
-        )
-    )
-    existing_result = await db.execute(existing_query)
-    existing_report = existing_result.scalar_one_or_none()
-
-    if existing_report:
-        # Supprimer l'ancien pour regénérer
-        await db.delete(existing_report)
-        await db.commit()
-
-    # Générer le nouveau rapport
-    service = DailyReviewService(db)
-    report = await service.generate_daily_report(current_user.id)
+    report_db, report = await briefing.build_and_store_report(db, current_user.id, replace=True)
     if notify:
         await notify_briefing(report)
-
-    # Stocker en BDD
-    report_db = DailyReportModel(
-        user_id=report.user_id,
-        date=report.date.date(),
-        summary=report.summary,
-        total_projects=report.total_projects,
-        active_projects=report.active_projects,
-        total_tasks=report.total_tasks,
-        completed_today=report.completed_today,
-        blockers_count=report.blockers_count,
-        projects_analysis=[p.dict() for p in report.projects],
-        top_priorities=report.top_priorities,
-        recommendations=report.recommendations,
-    )
-
-    db.add(report_db)
-    await db.commit()
-    await db.refresh(report_db)
 
     # Convertir en réponse
     projects = [

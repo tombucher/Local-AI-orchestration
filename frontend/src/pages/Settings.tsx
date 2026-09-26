@@ -12,6 +12,7 @@ import { settingsApi } from '../services/settingsApi';
 import { OllamaModel, UserSettings } from '../types/settings';
 import Loader from '../components/ui/Loader';
 import FeedLibrary from '../components/settings/FeedLibrary';
+import BriefingSettings from '../components/settings/BriefingSettings';
 
 type ModelType = 'code' | 'text' | 'ideation' | 'analysis' | 'task_generation';
 
@@ -291,6 +292,7 @@ export const Settings = () => {
 
               {/* Bibliothèque de flux RSS pour la veille */}
               <div className="mt-6">
+                <BriefingSettings />
                 <FeedLibrary />
               </div>
 

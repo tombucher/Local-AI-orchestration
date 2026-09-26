@@ -16,6 +16,7 @@ import { Sidebar } from '../components/Layout/Sidebar';
 import { ProjectCard } from '../components/ProjectCard';
 import { ServiceStatus } from '../components/ServiceStatus';
 import { DailyReport, SuggestedTask } from '../types/daily-report.types';
+import { aujourdhui } from '../components/Layout/BriefingNotifier';
 import toast from 'react-hot-toast';
 import { TaskStatus } from '../types/task.types';
 import type { VeilleResult } from '../types/task.types';
@@ -36,16 +37,39 @@ export const Dashboard = () => {
   const { tasks, fetchTasks } = useTasksStore();
   const [dailyReport, setDailyReport] = useState<DailyReport | null>(null);
   const [deadlines, setDeadlines] = useState<VeilleResult[]>([]);
+  // Briefing du jour en cours de préparation par le modèle local
+  const [briefingEnPreparation, setBriefingEnPreparation] = useState(false);
 
   useEffect(() => {
     fetchProjects();
     fetchTasks();
 
-    // Récupérer le rapport quotidien (silencieux : absent = normal le 1er jour)
+    // Dernier briefing (silencieux : absent = normal le 1er jour)
+    const chargerBriefing = () =>
+      api
+        .get<DailyReport | null>('/reports/daily/latest', { silentError: true })
+        .then((response) => {
+          if (response.data) setDailyReport(response.data);
+          return response.data;
+        })
+        .catch(() => null);
+    chargerBriefing();
+
+    // Première ouverture du jour : le briefing se prépare s'il manque (Mac en
+    // veille à l'heure prévue, serveur redémarré…). On réinterroge ensuite.
+    let attente: ReturnType<typeof setInterval> | null = null;
     api
-      .get('/reports/daily/latest', { silentError: true })
-      .then((response) => {
-        if (response.data) setDailyReport(response.data);
+      .post<{ state: 'ready' | 'preparing'; today: string }>('/reports/daily/ensure', null, { silentError: true })
+      .then(({ data }) => {
+        if (data.state !== 'preparing') return;
+        setBriefingEnPreparation(true);
+        attente = setInterval(async () => {
+          const rapport = await chargerBriefing();
+          if (rapport?.date === data.today) {
+            setBriefingEnPreparation(false);
+            if (attente) clearInterval(attente);
+          }
+        }, 20000);
       })
       .catch(() => {});
 
@@ -54,6 +78,10 @@ export const Dashboard = () => {
       .get<{ items: VeilleResult[] }>('/tasks/veille-deadlines', { silentError: true })
       .then((r) => setDeadlines(r.data.items))
       .catch(() => {});
+
+    return () => {
+      if (attente) clearInterval(attente);
+    };
   }, [fetchProjects, fetchTasks]);
 
   const projectsArray = Array.isArray(projects) ? projects : [];
@@ -136,9 +164,23 @@ export const Dashboard = () => {
           </header>
 
           {/* ===== Lead story : briefing du jour ===== */}
+          {briefingEnPreparation && (
+            <p className="mb-4 text-sm text-ink-soft flex items-center gap-2">
+              <span className="inline-block w-2 h-2 bg-accent animate-pulse" />
+              Le briefing du jour se prépare avec ton modèle local — quelques minutes.
+              {dailyReport && ' En attendant, voici le précédent.'}
+            </p>
+          )}
           {dailyReport && (
             <section className="mb-10 animate-fade-up" style={{ animationDelay: '80ms' }}>
-              <p className="kicker mb-2">Le briefing du matin</p>
+              <p className="kicker mb-2">
+                Le briefing du matin
+                {dailyReport.date !== aujourdhui() && (
+                  <span className="text-ink-faint normal-case tracking-normal">
+                    {' '}· du {new Date(`${dailyReport.date}T12:00:00`).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}
+                  </span>
+                )}
+              </p>
               <p className="standfirst max-w-3xl">{dailyReport.summary}</p>
 
               {dailyReport.top_priorities.length > 0 && (

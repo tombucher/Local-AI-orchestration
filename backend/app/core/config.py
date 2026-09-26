@@ -37,6 +37,11 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3000",
     ]
     
+    # Fuseau de l'utilisateur : heure du briefing et « aujourd'hui ». Le conteneur
+    # tourne en UTC — le briefing de « 8 h » tombait à 10 h à Paris.
+    TIMEZONE: str = "Europe/Paris"
+    BRIEFING_HOUR: int = 8
+
     # Notifications push du briefing via ntfy (app gratuite iOS/Android).
     # NTFY_TOPIC vide = désactivé. Choisir un nom de topic difficile à deviner.
     NTFY_URL: str = "https://ntfy.sh"

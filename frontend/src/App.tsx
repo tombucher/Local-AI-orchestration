@@ -22,6 +22,7 @@ import { TasksList } from './pages/Tasks/TasksList';
 import { TaskDetail } from './pages/Tasks/TaskDetail';
 import { TaskForm } from './pages/Tasks/TaskForm';
 import { Settings } from './pages/Settings';
+import { BriefingNotifier } from './components/Layout/BriefingNotifier';
 
 function App() {
   const { isAuthenticated, checkAuth } = useAuthStore();
@@ -33,6 +34,7 @@ function App() {
 
   return (
     <BrowserRouter>
+      <BriefingNotifier />
       <Routes>
         {/* Route racine : redirect selon auth */}
         <Route

@@ -35,7 +35,7 @@ from app.core.config import settings as app_settings
 from app.services.model_registry import resolve_model, supports_vision, think_kwargs
 from app.services.project_workspace import build_workspace_context
 from app.services.project_memory import build_project_memory, score_against_memory
-from app.services.task_progress import clear_progress, set_progress
+from app.services.task_progress import clear_progress, set_progress, task_finished, task_started
 from app.services.project_documents import build_document_context
 from app.services.task_chain import brief_without_checklist, build_upstream_context, checklist_items
 from app.services.visual_scoring import score_images_with_vision, titre_illisible
@@ -191,6 +191,14 @@ class UnifiedOrchestrator:
         Args:
             task: Tâche à traiter
         """
+        # Signale au chien de garde que la tâche vit dans ce processus
+        task_started(task.id)
+        try:
+            await self._handle_task(task)
+        finally:
+            task_finished(task.id)
+
+    async def _handle_task(self, task: Task) -> None:
         logger.info(f"🚀 Handling task {task.id}: {task.title} (type: {task.task_type})")
         set_progress(task.id, "starting", "Démarrage…")
 

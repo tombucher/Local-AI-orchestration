@@ -13,7 +13,7 @@ def test_aucune_tache_terminee_sans_contenu():
     """Garde-fou : la transition vers COMPLETED doit être conditionnée."""
     from app.services.unified_orchestrator import UnifiedOrchestrator
 
-    source = inspect.getsource(UnifiedOrchestrator.handle_task)
+    source = inspect.getsource(UnifiedOrchestrator._handle_task)
     assert "a_produit" in source
     # …et le contrôle doit précéder la transition de statut
     assert source.index("a_produit") < source.index("TaskStatus.COMPLETED")
@@ -23,7 +23,7 @@ def test_tache_vide_marquee_en_echec():
     """Marquer FAILED plutôt que COMPLETED rend la tâche visible et relançable."""
     from app.services.unified_orchestrator import UnifiedOrchestrator
 
-    source = inspect.getsource(UnifiedOrchestrator.handle_task)
+    source = inspect.getsource(UnifiedOrchestrator._handle_task)
     assert "TaskStatus.FAILED" in source
     assert "GENERATION_FAILED" in source
     assert "retry_count" in source
@@ -74,6 +74,6 @@ def test_statut_en_cours_visible_des_le_demarrage():
     tout son traitement : le passage à GENERATING doit être validé aussitôt."""
     from app.services.unified_orchestrator import UnifiedOrchestrator
 
-    source = inspect.getsource(UnifiedOrchestrator.handle_task)
+    source = inspect.getsource(UnifiedOrchestrator._handle_task)
     debut = source.index("TaskStatus.GENERATING")
     assert "await self.db.commit()" in source[debut:source.index("# Dispatch")]
