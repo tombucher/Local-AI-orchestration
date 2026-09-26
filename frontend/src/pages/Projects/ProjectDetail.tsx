@@ -20,6 +20,7 @@ import { ProjectFeaturesPanel, ProjectFinancialPanel } from '../../components/pr
 import { ProjectHealthDashboard } from '../../components/projects/ProjectHealthDashboard';
 import { ProjectTasksBoard } from '../../components/projects/ProjectTasksBoard';
 import ProjectDocuments from '../../components/projects/ProjectDocuments';
+import ProjectOutputs from '../../components/projects/ProjectOutputs';
 import ConfirmDialog from '../../components/ui/ConfirmDialog';
 import Loader from '../../components/ui/Loader';
 import { tasksService } from '../../services/tasks';
@@ -192,6 +193,7 @@ export const ProjectDetail = () => {
       ) : (
         <>
           <ProjectFeaturesPanel project={project} />
+          <ProjectOutputs projectId={project.id} />
           <ProjectDocuments projectId={project.id} />
           <ProjectHealthDashboard
             project={project}

@@ -315,7 +315,7 @@ class UnifiedOrchestrator:
 
         # Textes rédigés en amont (contenus de page, note d'intention…) : le code
         # des dépendances arrive déjà par le plan de fichiers.
-        upstream = await build_upstream_context(self.db, task, skip_code=True)
+        upstream = await build_upstream_context(self.db, task, skip_code=True, max_chars=6000)
         reference = "\n\n".join(part for part in (upstream, documents.text) if part)
 
         set_progress(task.id, "generation", f"Génération du code par {model}…")

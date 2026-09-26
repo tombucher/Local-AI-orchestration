@@ -72,6 +72,9 @@ class ProjectResponse(ProjectBase):
     financial_config: Optional[FinancialConfig] = None
     created_at: datetime
     updated_at: datetime
+    # Absent du schéma, le score n'atteignait jamais l'écran : la jauge affichait
+    # 0/100 alors que la base contenait 90.
+    maturity_score: int = 0
     # Statistiques optionnelles (pour la liste de projets)
     tasks_total: Optional[int] = None
     tasks_completed: Optional[int] = None

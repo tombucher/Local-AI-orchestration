@@ -117,6 +117,10 @@ export const MaturityIndicators = ({ projectId, maturityScore }: MaturityIndicat
     );
   }
 
+  // L'analyse est recalculée à l'ouverture : elle fait foi sur la valeur stockée,
+  // sans quoi la tuile peut contredire les critères affichés juste à côté.
+  const score = analysis.maturity_score ?? maturityScore;
+
   return (
     <div className="bg-paper-card rounded-none shadow-card border border-ink-line p-6">
       <h2 className="text-lg font-semibold text-ink mb-4">Indicateurs de Maturité</h2>
@@ -125,9 +129,9 @@ export const MaturityIndicators = ({ projectId, maturityScore }: MaturityIndicat
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
         <StatsCard
           title="Score Global"
-          value={`${maturityScore}/100`}
+          value={`${score}/100`}
           icon={BarChart2}
-          color={getCriteriaColor(maturityScore)}
+          color={getCriteriaColor(score)}
         />
         {analysis.criteria_analysis && (
           <>

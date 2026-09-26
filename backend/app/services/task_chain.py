@@ -9,6 +9,7 @@ projet et produisait un texte générique.
 """
 
 import re
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from sqlalchemy import select
@@ -22,6 +23,9 @@ MAX_CHARS_PER_TASK = 4000
 MAX_RESULTS_PER_VEILLE = 8
 
 VEILLE_TYPES = {TaskType.VEILLE, TaskType.VEILLE_TECH, TaskType.VEILLE_CULTURAL, TaskType.VEILLE_EVENTS}
+# La recherche de financements range ses appels comme des résultats de veille ; son
+# texte se résume à « 7 opportunités trouvées », inutilisable par un dossier.
+RESULT_TYPES = VEILLE_TYPES | {TaskType.FUNDING_SEARCH}
 
 _CHECKLIST = re.compile(r"^\s*[-*]\s*\[[ xX]?\]\s*(.+?)\s*$", re.MULTILINE)
 
@@ -46,15 +50,26 @@ async def _veille_digest(db: AsyncSession, task: Task) -> str:
     if not results:
         return ""
 
+    maintenant = datetime.now(timezone.utc)
+
+    def clos(r) -> bool:
+        if not r.deadline:
+            return False
+        echeance = r.deadline if r.deadline.tzinfo else r.deadline.replace(tzinfo=timezone.utc)
+        return echeance < maintenant
+
+    # Un appel clos ne sert plus à rien : ceux encore ouverts passent devant
     results = sorted(
         results,
-        key=lambda r: (r.status != VeilleResultStatus.SAVED, -(r.relevance_score or 0)),
+        key=lambda r: (clos(r), r.status != VeilleResultStatus.SAVED, -(r.relevance_score or 0)),
     )[:MAX_RESULTS_PER_VEILLE]
 
     lines = []
     for r in results:
         resume = (r.ai_summary or r.description or "").strip().replace("\n", " ")[:240]
         ligne = f"- {r.title.strip()}"
+        if r.deadline:
+            ligne += f" [{'CLOS le' if clos(r) else 'date limite'} {r.deadline:%d/%m/%Y}]"
         if resume and resume != r.title.strip():
             ligne += f" — {resume}"
         if r.url:
@@ -90,8 +105,11 @@ async def build_upstream_context(
         if budget <= 0:
             break
 
-        if dep.task_type in VEILLE_TYPES:
-            body = await _veille_digest(db, dep)
+        if dep.task_type in RESULT_TYPES:
+            body = "\n\n".join(filter(None, [
+                (dep.generated_code or "").strip() if dep.task_type == TaskType.FUNDING_SEARCH else "",
+                await _veille_digest(db, dep),
+            ]))
         else:
             body = (dep.generated_code or "").strip()
 

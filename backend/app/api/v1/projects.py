@@ -39,6 +39,7 @@ from app.models.task_log import TaskLog, TaskEventType
 from app.services.project_analyzer import ProjectAnalyzer, TaskSuggestion, AnalysisError
 from app.services.critical_path import CriticalPathService
 from app.services.maturity import MaturityService
+from app.services.project_export import build_zip, collect_project_files, entry_page, zip_filename
 from app.models.veille_topic import VeilleTopic, VeilleScope
 
 router = APIRouter()
@@ -1482,3 +1483,45 @@ async def delete_project_document(
     document = await _own_document(db, project_id, document_id, current_user.id)
     await db.delete(document)
     await db.commit()
+
+
+@router.get("/{project_id}/files")
+async def get_project_files(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Ce que le projet a produit, rassemblé : fichiers de code (avec leur contenu,
+    pour l'aperçu), documents, veilles, et les liens cassés entre fichiers."""
+    project = await _own_project(db, project_id, current_user.id)
+    files = await collect_project_files(db, project)
+    return {
+        "entry": entry_page(files),
+        "code": [
+            {"path": f.path, "task_id": f.task_id, "task_title": f.task_title,
+             "size": len(f.content), "content": f.content}
+            for f in files.code
+        ],
+        "documents": [
+            {"path": f.path, "task_id": f.task_id, "task_title": f.task_title,
+             "kind": f.kind, "size": len(f.content)}
+            for f in files.documents
+        ],
+        "coherence": files.coherence,
+    }
+
+
+@router.get("/{project_id}/export")
+async def export_project(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Tout le projet dans une archive .zip, prête à ouvrir."""
+    project = await _own_project(db, project_id, current_user.id)
+    files = await collect_project_files(db, project)
+    return Response(
+        content=build_zip(project, files),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{zip_filename(project)}"'},
+    )

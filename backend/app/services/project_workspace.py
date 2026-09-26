@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.project import Project
 from app.models.task import Task, TaskStatus, TaskType, task_dependencies
+from app.services.code_contract import extract_contract, format_contract
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +35,12 @@ class WorkspaceContext:
     own_path: Optional[str] = None             # Fichier attribué à la tâche courante
     file_plan: Dict[int, Optional[str]] = field(default_factory=dict)
 
-# Budget de caractères pour le code des autres tâches injecté dans le prompt
-MAX_CONTEXT_CHARS = 9000
-MAX_CHARS_PER_FILE = 4000
+# Budget de caractères pour le code des autres tâches injecté dans le prompt.
+# 4 000 par fichier coupait un HTML ordinaire en deux : le CSS et le JS ne
+# voyaient pas la moitié des éléments et en inventaient d'autres. Les modèles
+# tournent avec 16 à 32 k tokens de contexte, ces valeurs y tiennent largement.
+MAX_CONTEXT_CHARS = 20000
+MAX_CHARS_PER_FILE = 12000
 
 EXTENSIONS = (
     'html', 'htm', 'css', 'scss', 'sass', 'js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx',
@@ -232,12 +236,28 @@ async def build_workspace_context(
         "3. Dans un fichier HTML, relie les autres fichiers avec les chemins EXACTS du plan : "
         "`<link rel=\"stylesheet\" href=\"styles.css\">` dans le `<head>` et "
         "`<script src=\"app.js\" defer></script>` avant `</body>`.",
-        "4. Réutilise à l'identique les noms de classes, d'identifiants, de variables CSS et de fonctions "
-        "du code déjà produit ci-dessous — ne les renomme pas, n'en invente pas d'autres.",
+        "4. Le contrat d'interface ci-dessous fait foi : réutilise à l'identique ses identifiants, classes "
+        "et variables CSS — ne les renomme pas. Une feuille de styles stylise les classes du HTML ET celles "
+        "que le script crée ; un script branche les éléments prévus par le HTML (boutons, conteneurs) au "
+        "lieu d'en créer d'autres à leur place.",
         "5. Si le code d'une dépendance manque, appuie-toi sur son intitulé et reste cohérent avec le plan.",
         "6. Aucun texte hors du fichier : pas de phrase d'introduction, pas de balises ``` autour du code.",
     ]
     sections.append('\n'.join(rules))
+
+    # --- Contrat d'interface -----------------------------------------------
+    # Toujours complet, même quand le code lui-même doit être tronqué plus bas.
+    contrats = []
+    for sibling in siblings:
+        path = plan.get(sibling.id)
+        if sibling.id == task.id or not path or not (sibling.generated_code or '').strip():
+            continue
+        contrat = extract_contract(path, sibling.generated_code)
+        if not contrat.is_empty():
+            contrats.append(format_contract(path, contrat))
+    if contrats:
+        sections.append("\n### Contrat d'interface (liste exhaustive des noms déjà utilisés)\n"
+                        + "\n".join(contrats))
 
     # --- Code déjà produit --------------------------------------------------
     # Les dépendances d'abord : ce sont les contrats que la tâche courante doit respecter.
