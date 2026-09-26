@@ -85,3 +85,28 @@ async def test_tache_vivante_mais_interminable_arretee(client, auth_headers, ses
         assert await _statut(session_de_test, tid) == TaskStatus.FAILED
     finally:
         task_progress.task_finished(tid)
+
+
+@pytest.mark.asyncio
+async def test_relance_des_taches_en_echec_ne_plante_plus(client, auth_headers, db_session):
+    """La base renvoie des dates avec fuseau : la comparaison avec utcnow()
+    faisait échouer tout le cycle de la file (constaté le 26/09/2026)."""
+    from app.services.unified_orchestrator import UnifiedOrchestrator
+
+    projet = (await client.post("/api/v1/projects/", json={
+        "name": "Relance", "type": "personal", "features": {"code_gen": True},
+    }, headers=auth_headers)).json()["id"]
+    ancienne = Task(project_id=projet, title="Ancienne", task_type=TaskType.VEILLE,
+                    status=TaskStatus.FAILED, retry_count=1,
+                    last_failed_at=datetime.now(timezone.utc) - timedelta(hours=3))
+    recente = Task(project_id=projet, title="Récente", task_type=TaskType.VEILLE,
+                   status=TaskStatus.FAILED, retry_count=1,
+                   last_failed_at=datetime.now(timezone.utc))
+    db_session.add_all([ancienne, recente])
+    await db_session.commit()
+    ids = (ancienne.id, recente.id)
+
+    assert await UnifiedOrchestrator(db_session)._retry_failed_tasks() == 1
+    await db_session.commit()
+    assert await _statut(db_session, ids[0]) == TaskStatus.READY
+    assert await _statut(db_session, ids[1]) == TaskStatus.FAILED  # cooldown en cours

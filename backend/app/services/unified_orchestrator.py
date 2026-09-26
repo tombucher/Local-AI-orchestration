@@ -1103,7 +1103,10 @@ Sois concret et directement applicable. Format Markdown."""
 
         Utilise un backoff exponentiel : cooldown croissant selon retry_count.
         """
-        now = datetime.utcnow()
+        # En UTC avec fuseau : la base renvoie des dates avec fuseau, et la
+        # comparaison avec utcnow() (sans fuseau) faisait échouer tout le cycle
+        # de la file dès qu'une tâche en échec attendait sa relance.
+        now = datetime.now(timezone.utc)
         batch_size = app_settings.ORCHESTRATOR_BATCH_SIZE
 
         # Récupérer les tâches FAILED candidates (retry_count < max et last_failed_at défini)
@@ -1127,7 +1130,10 @@ Sois concret et directement applicable. Format Markdown."""
             cooldown = self._get_retry_cooldown_minutes(task.retry_count)
             cutoff = now - timedelta(minutes=cooldown)
 
-            if task.last_failed_at > cutoff:
+            failed_at = task.last_failed_at
+            if failed_at.tzinfo is None:
+                failed_at = failed_at.replace(tzinfo=timezone.utc)
+            if failed_at > cutoff:
                 continue  # Cooldown pas encore écoulé
 
             task.status = TaskStatus.READY
