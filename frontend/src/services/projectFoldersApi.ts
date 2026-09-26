@@ -14,7 +14,9 @@ export interface BrowseResult {
   path: string;
   display: string;
   parent: string | null;
+  breadcrumb: { name: string; path: string }[];
   dirs: FolderEntry[];
+  files: { name: string; is_md: boolean }[];
 }
 
 export interface SyncReport {

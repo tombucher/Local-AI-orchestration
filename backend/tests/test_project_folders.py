@@ -133,6 +133,20 @@ def test_chemins_hors_du_partage_refuses(mac):
     assert [d["name"] for d in pf.browse("")["dirs"]] == ["Projets"]
 
 
+def test_parcours_montre_aussi_les_fichiers(mac):
+    """Un dossier sans sous-dossier semblait vide : ses fichiers doivent apparaître."""
+    d = mac / "Projets" / "Expo" / "Textes"
+    d.mkdir(parents=True)
+    (d / "fiche.md").write_text("x")
+    (d / "photo.jpg").write_bytes(b"x")
+    (d / ".DS_Store").write_bytes(b"x")
+    vu = pf.browse("Projets/Expo/Textes")
+    assert vu["dirs"] == []
+    assert vu["files"] == [{"name": "fiche.md", "is_md": True}, {"name": "photo.jpg", "is_md": False}]
+    assert [e["name"] for e in vu["breadcrumb"]] == ["Documents", "Projets", "Expo", "Textes"]
+    assert vu["breadcrumb"][2]["path"] == "Projets/Expo"
+
+
 def test_fiche_du_dossier_choisie(mac):
     d = mac / "Projets" / "Expo"
     d.mkdir()

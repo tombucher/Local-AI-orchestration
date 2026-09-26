@@ -49,6 +49,7 @@ SORTIES = "Production"
 MANIFESTE = ".orchestrateur.json"
 MAX_TAILLE_FICHE = 512 * 1024
 NOMS_PREFERES = ("projet.md", "README.md", "readme.md")
+MAX_FICHIERS_AFFICHES = 200
 
 
 # ---------------------------------------------------------------- chemins --
@@ -120,18 +121,30 @@ def browse(rel: str = "") -> dict:
     if not dossier.is_dir():
         raise ValueError("Dossier introuvable.")
     rel_propre = relative(dossier) if dossier != mount().resolve() else ""
-    enfants = []
+    enfants, fichiers = [], []
     for p in sorted(dossier.iterdir(), key=lambda x: x.name.lower()):
-        if p.is_dir() and not p.name.startswith("."):
-            try:
+        if p.name.startswith("."):
+            continue
+        try:
+            if p.is_dir():
                 enfants.append({"name": p.name, "path": relative(p),
                                 "is_project": pick_project_file(p) is not None})
-            except (PermissionError, ValueError):
-                continue
+            elif len(fichiers) < MAX_FICHIERS_AFFICHES:
+                # Montrés pour se repérer : un dossier sans sous-dossier semblait vide
+                fichiers.append({"name": p.name, "is_md": p.suffix.lower() == ".md"})
+        except (PermissionError, ValueError, OSError):
+            continue
     parent = None
     if rel_propre:
         parent = relative(dossier.parent) if dossier.parent != mount().resolve() else ""
-    return {"path": rel_propre, "display": display_path(rel_propre), "parent": parent, "dirs": enfants}
+    # Fil d'Ariane : du dossier partagé jusqu'ici, chaque étape cliquable
+    etapes = [{"name": Path(display_path()).name or display_path(), "path": ""}]
+    cumul = []
+    for morceau in (rel_propre.split("/") if rel_propre else []):
+        cumul.append(morceau)
+        etapes.append({"name": morceau, "path": "/".join(cumul)})
+    return {"path": rel_propre, "display": display_path(rel_propre), "parent": parent,
+            "breadcrumb": etapes, "dirs": enfants, "files": fichiers}
 
 
 def _empreinte(texte: str) -> str:

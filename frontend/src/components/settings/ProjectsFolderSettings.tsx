@@ -5,8 +5,8 @@
  * terminées et range ce qu'il produit dans Production/.
  */
 
-import { useEffect, useState } from 'react';
-import { ChevronLeft, Folder, FolderCheck, FolderOpen, RefreshCw } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { ChevronLeft, ChevronRight, FileText, Folder, FolderCheck, FolderOpen, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
   BrowseResult,
@@ -47,6 +47,7 @@ export const ProjectsFolderSettings = () => {
   const [parcours, setParcours] = useState<BrowseResult | null>(null);
   const [rapport, setRapport] = useState<SyncReport | null>(null);
   const [occupe, setOccupe] = useState(false);
+  const liste = useRef<HTMLUListElement>(null);
 
   useEffect(() => {
     projectFoldersApi.get().then(setEtat).catch(() => {});
@@ -55,6 +56,8 @@ export const ProjectsFolderSettings = () => {
   const ouvrir = async (path: string) => {
     try {
       setParcours(await projectFoldersApi.browse(path));
+      // Nouveau dossier : repartir du haut, sinon la liste semble ne pas changer
+      liste.current?.scrollTo({ top: 0 });
     } catch {
       // erreur affichée par l'intercepteur
     }
@@ -153,9 +156,26 @@ export const ProjectsFolderSettings = () => {
                         <ChevronLeft className="w-4 h-4" />
                       </button>
                     )}
-                    <span className="font-mono text-xs text-ink-soft truncate min-w-0 flex-1">
-                      {parcours.display}
-                    </span>
+                    <nav className="flex items-center flex-wrap gap-0.5 min-w-0 flex-1 text-sm" aria-label="Emplacement">
+                      {parcours.breadcrumb.map((etape, i) => {
+                        const derniere = i === parcours.breadcrumb.length - 1;
+                        return (
+                          <span key={etape.path} className="flex items-center gap-0.5 min-w-0">
+                            {i > 0 && <ChevronRight className="w-3.5 h-3.5 text-ink-faint shrink-0" />}
+                            {derniere ? (
+                              <span className="font-medium text-ink truncate">{etape.name}</span>
+                            ) : (
+                              <button
+                                onClick={() => ouvrir(etape.path)}
+                                className="text-ink-soft hover:text-accent truncate"
+                              >
+                                {etape.name}
+                              </button>
+                            )}
+                          </span>
+                        );
+                      })}
+                    </nav>
                     <button
                       onClick={() => choisir(parcours.path)}
                       disabled={occupe}
@@ -164,9 +184,9 @@ export const ProjectsFolderSettings = () => {
                       Choisir ce dossier
                     </button>
                   </div>
-                  <ul className="max-h-72 overflow-auto divide-y divide-ink-line">
-                    {parcours.dirs.length === 0 && (
-                      <li className="px-3 py-2 text-sm text-ink-faint">Aucun sous-dossier</li>
+                  <ul ref={liste} className="max-h-72 overflow-auto divide-y divide-ink-line">
+                    {parcours.dirs.length === 0 && parcours.files.length === 0 && (
+                      <li className="px-3 py-2 text-sm text-ink-faint">Dossier vide</li>
                     )}
                     {parcours.dirs.map((d) => (
                       <li key={d.path}>
@@ -184,6 +204,16 @@ export const ProjectsFolderSettings = () => {
                             <span className="ml-auto text-xs text-ink-faint shrink-0">contient une fiche .md</span>
                           )}
                         </button>
+                      </li>
+                    ))}
+                    {/* Fichiers : pour se repérer, pas cliquables */}
+                    {parcours.files.map((f) => (
+                      <li
+                        key={`fichier-${f.name}`}
+                        className={`flex items-center gap-2 px-3 py-1.5 text-sm ${f.is_md ? 'text-ink' : 'text-ink-faint'}`}
+                      >
+                        <FileText className="w-4 h-4 shrink-0" />
+                        <span className="truncate">{f.name}</span>
                       </li>
                     ))}
                   </ul>
