@@ -40,7 +40,9 @@ from app.services.project_analyzer import ProjectAnalyzer, TaskSuggestion, Analy
 from app.services.critical_path import CriticalPathService
 from app.services.maturity import MaturityService
 from app.services.project_export import build_zip, collect_project_files, entry_page, zip_filename
-from app.services.project_folders import MAX_TAILLE_FICHE, import_markdown_file
+from app.services.project_folders import (
+    MAX_TAILLE_FICHE, FicheModifiee, SansDossier, import_markdown_file, write_project_markdown,
+)
 from app.models.veille_topic import VeilleTopic, VeilleScope
 
 router = APIRouter()
@@ -67,6 +69,27 @@ async def import_project_markdown(
         raise HTTPException(status_code=400, detail="Le fichier est vide.")
     projet = await import_markdown_file(db, current_user.id, file.filename, texte)
     return {"id": projet.id, "name": projet.name, "source_path": projet.source_path}
+
+
+@router.post("/write-md-all")
+async def write_all_project_markdown(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Écrit dossier et fiche de chaque projet actif qui n'en a pas encore."""
+    projets = (await db.execute(select(Project).where(
+        Project.user_id == current_user.id,
+        Project.status != ProjectStatus.ARCHIVED,
+        Project.source_path.is_(None),
+    ).order_by(Project.id))).scalars().all()
+    ecrits = []
+    for projet in projets:
+        try:
+            resultat = await write_project_markdown(db, current_user.id, projet)
+        except SansDossier as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        ecrits.append({"id": projet.id, "name": projet.name, **resultat})
+    return {"written": ecrits}
 
 
 @router.get("/", response_model=ProjectList)
@@ -1549,3 +1572,21 @@ async def export_project(
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{zip_filename(project)}"'},
     )
+
+
+@router.post("/{project_id}/write-md")
+async def write_project_md(
+    project_id: int,
+    force: bool = Query(False, description="Réécrire même si la fiche a été modifiée à la main"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Écrit (ou met à jour) la fiche .md du projet d'après ce qui est dans l'outil."""
+    projet = await _own_project(db, project_id, current_user.id)
+    try:
+        return await write_project_markdown(db, current_user.id, projet, force=force)
+    except SansDossier as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except FicheModifiee as e:
+        # 412 : le frontend propose alors de réécrire quand même
+        raise HTTPException(status_code=412, detail=str(e))

@@ -281,3 +281,93 @@ def cocher_tache(texte: str, titre: str) -> Optional[str]:
             lignes[i] = f"## [x] {h2[2].strip()}{fin}"
             return "\n".join(lignes)
     return None
+
+
+# ------------------------------------------------------------- écriture --
+# Inverse de lire_projet : une fiche écrite depuis l'outil doit se relire à
+# l'identique, sinon la synchronisation suivante déformerait le projet.
+
+# type de tâche (+ portée de veille) → libellé de la ligne « type: »
+LIBELLES_TYPE = {
+    (TaskType.CODE_GENERATION, None): "code",
+    (TaskType.DOCUMENT_WRITING, None): "document",
+    (TaskType.VEILLE, "news"): "veille",
+    (TaskType.VEILLE, "visual"): "veille visuelle",
+    (TaskType.VEILLE, "cultural"): "veille culturelle",
+    (TaskType.VEILLE, "tech"): "veille tech",
+    (TaskType.FUNDING_SEARCH, None): "financement",
+    (TaskType.RESEARCH, None): "recherche",
+    (TaskType.ADMINISTRATIVE, None): "administratif",
+}
+LIBELLES_FREQUENCE = {"daily": "quotidienne", "weekly": "hebdo", "monthly": "mensuelle"}
+_TITRE_A_ABAISSER = re.compile(r"^(#{1,2})(\s)", re.MULTILINE)
+
+
+def _abaisser_titres(texte: str) -> str:
+    """Un « ## » dans une description deviendrait une tâche à la relecture."""
+    lignes, dans_code = [], False
+    for ligne in (texte or "").split("\n"):
+        if ligne.lstrip().startswith("```"):
+            dans_code = not dans_code
+        lignes.append(ligne if dans_code else _TITRE_A_ABAISSER.sub(r"###\2", ligne))
+    return "\n".join(lignes).strip()
+
+
+@dataclass
+class TacheAEcrire:
+    titre: str
+    fait: bool
+    task_type: TaskType
+    metadata: dict
+    description: str = ""
+    echeance: Optional[datetime] = None
+    apres: List[str] = field(default_factory=list)
+    priorite: TaskPriority = TaskPriority.P2
+    mots_cles: List[str] = field(default_factory=list)
+
+
+def _libelle_type(t: TacheAEcrire) -> Optional[str]:
+    scope = t.metadata.get("scope") if t.task_type in (TaskType.VEILLE, TaskType.VEILLE_TECH,
+                                                        TaskType.VEILLE_CULTURAL, TaskType.VEILLE_EVENTS) else None
+    if t.task_type in (TaskType.VEILLE_TECH,):
+        scope = "tech"
+    elif t.task_type in (TaskType.VEILLE_CULTURAL, TaskType.VEILLE_EVENTS):
+        scope = "cultural"
+    if t.task_type == TaskType.VEILLE and scope not in ("visual", "cultural", "tech"):
+        scope = "news"  # sans portée, une veille relue passerait pour un document
+    type_normal = TaskType.VEILLE if scope else t.task_type
+    return LIBELLES_TYPE.get((type_normal, scope)) or LIBELLES_TYPE.get((type_normal, None))
+
+
+def ecrire_projet(titre: str, description: Optional[str], taches: List[TacheAEcrire]) -> str:
+    morceaux = [f"# {titre.strip()}", ""]
+    if (description or "").strip():
+        morceaux += [_abaisser_titres(description), ""]
+    for t in taches:
+        morceaux.append(f"## {'[x] ' if t.fait else ''}{t.titre.strip()}")
+        meta = []
+        libelle = _libelle_type(t)
+        if libelle:
+            meta.append(f"type: {libelle}")
+        if t.echeance:
+            meta.append(f"échéance: {t.echeance:%d/%m/%Y}")
+        if t.apres:
+            meta.append("après: " + ", ".join(a.strip() for a in t.apres))
+        if t.priorite == TaskPriority.P1:
+            meta.append("priorité: haute")
+        elif t.priorite == TaskPriority.P3:
+            meta.append("priorité: basse")
+        if t.metadata.get("artifact_path") and t.task_type == TaskType.CODE_GENERATION:
+            meta.append(f"fichier: {t.metadata['artifact_path']}")
+        if t.mots_cles:
+            meta.append("mots-clés: " + ", ".join(t.mots_cles))
+        frequence = LIBELLES_FREQUENCE.get(t.metadata.get("frequency") or "")
+        if frequence:
+            meta.append(f"fréquence: {frequence}")
+        if meta:
+            morceaux.append(" · ".join(meta))
+        corps = _abaisser_titres(t.description)
+        if corps:
+            morceaux.append(corps)
+        morceaux.append("")
+    return "\n".join(morceaux).rstrip() + "\n"

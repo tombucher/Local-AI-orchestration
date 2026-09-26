@@ -41,7 +41,9 @@ from app.models.user_settings import UserSettings
 from app.models.veille_topic import VeilleScope, VeilleTopic
 from app.services.maturity import MaturityService
 from app.services.project_export import collect_project_files, safe_path
-from app.services.project_markdown import cle_titre, cocher_tache, lire_projet
+from app.services.project_markdown import (
+    TacheAEcrire, cle_titre, cocher_tache, ecrire_projet, lire_projet,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -444,3 +446,100 @@ async def import_markdown_file(db: AsyncSession, user_id: int, filename: str, te
     projet = await apply_markdown(db, user_id, texte, fallback_name=nom, source_path=rel)
     await db.commit()
     return projet
+
+
+# --------------------------------------------- outil → fiche, sur demande --
+
+class FicheModifiee(Exception):
+    """La fiche a changé sur le disque depuis la dernière synchronisation."""
+
+
+class SansDossier(Exception):
+    """Aucun dossier de projets n'est choisi."""
+
+
+async def write_project_markdown(db: AsyncSession, user_id: int, project: Project,
+                                 force: bool = False) -> dict:
+    """Écrit (ou réécrit) la fiche d'un projet d'après ce qui est dans l'outil.
+
+    Sans fiche : crée son dossier dans le dossier de projets. Avec fiche :
+    la remplace — sauf si elle a été modifiée depuis la dernière
+    synchronisation (FicheModifiee), pour ne pas perdre ce qui y a été écrit.
+    """
+    racine = await user_root(db, user_id)
+    if racine is None and not project.source_path:
+        raise SansDossier("Choisis d'abord un dossier de projets dans Paramètres.")
+
+    taches = [t for t in (await db.execute(
+        select(Task).where(Task.project_id == project.id).order_by(Task.id)
+    )).unique().scalars().all() if t.status != TaskStatus.CANCELLED]
+
+    # Titres uniques : c'est par eux que fiche et tâches se retrouvent
+    vus: Dict[str, int] = {}
+    for t in taches:
+        cle = cle_titre(t.title)
+        if cle in vus:
+            vus[cle] += 1
+            t.title = f"{t.title} ({vus[cle]})"[:255]
+        else:
+            vus[cle] = 1
+
+    ids = {t.id: t for t in taches}
+    deps: Dict[int, List[str]] = {}
+    for tache_id, dep_id in (await db.execute(
+        select(task_dependencies.c.task_id, task_dependencies.c.depends_on_id)
+        .where(task_dependencies.c.task_id.in_(list(ids)))
+    )).all():
+        if dep_id in ids:
+            deps.setdefault(tache_id, []).append(ids[dep_id].title)
+
+    sujets = {v.id: v for v in (await db.execute(
+        select(VeilleTopic).where(VeilleTopic.project_id == project.id))).scalars().all()}
+
+    a_ecrire = []
+    for t in taches:
+        meta = t.task_metadata or {}
+        mots = meta.get("keywords") or (sujets[t.veille_topic_id].keywords
+                                        if t.veille_topic_id in sujets else []) or []
+        if t.veille_topic_id in sujets and "scope" not in meta:
+            meta = {**meta, "scope": sujets[t.veille_topic_id].scope.value}
+        a_ecrire.append(TacheAEcrire(
+            titre=t.title, fait=t.status == TaskStatus.COMPLETED, task_type=t.task_type,
+            metadata=meta, description=t.description or "", echeance=t.due_date,
+            apres=deps.get(t.id, []), priorite=t.priority,
+            mots_cles=[m for m in mots if isinstance(m, str)] if t.task_type in (
+                TaskType.VEILLE, TaskType.FUNDING_SEARCH) else [],
+        ))
+    texte = ecrire_projet(project.name, project.description, a_ecrire)
+
+    creation = not project.source_path
+    if creation:
+        base = _nom_de_dossier(project.name)
+        dossier, n = racine / base, 2
+        while dossier.exists():  # ne jamais écrire dans un dossier existant
+            dossier, n = racine / f"{base} {n}", n + 1
+        fiche = dossier / f"{base}.md"
+    else:
+        fiche = inside_mount(project.source_path)
+        if fiche.exists() and not force:
+            actuel = fiche.read_text(encoding="utf-8", errors="replace")
+            if _empreinte(actuel) != project.source_hash:
+                raise FicheModifiee(
+                    "La fiche a été modifiée depuis la dernière synchronisation : "
+                    "la réécrire effacerait ces changements.")
+
+    _ecrire_atomique(fiche, texte)
+
+    for t in taches:
+        fait = t.status == TaskStatus.COMPLETED
+        meta = {k: v for k, v in (t.task_metadata or {}).items() if k != "md_removed"}
+        t.task_metadata = {**meta, "source": "md", "md_key": cle_titre(t.title),
+                           "md_done": fait, "md_checked": fait}
+    project.source_path = relative(fiche)
+    project.source_hash = _empreinte(texte)
+
+    rapport = SyncReport()
+    await _exporter(db, project, fiche.parent, rapport)
+    await db.commit()
+    return {"created": creation, "path": project.source_path,
+            "display": display_path(project.source_path), "exported": len(rapport.exported)}

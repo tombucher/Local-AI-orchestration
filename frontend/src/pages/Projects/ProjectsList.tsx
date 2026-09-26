@@ -8,13 +8,15 @@
 
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Search, FolderKanban } from 'lucide-react';
+import { FolderDown, Plus, Search, FolderKanban } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { projectFoldersApi } from '../../services/projectFoldersApi';
 import { useProjectsStore } from '../../stores/projectsStore';
 import { Navbar } from '../../components/Layout/Navbar';
 import { Sidebar } from '../../components/Layout/Sidebar';
 import { ProjectCard } from '../../components/ProjectCard';
 import { EmptyState } from '../../components/EmptyState';
-import { ProjectType } from '../../types/project.types';
+import { ProjectStatus, ProjectType } from '../../types/project.types';
 import Loader from '../../components/ui/Loader';
 import MarkdownImport from '../../components/projects/MarkdownImport';
 
@@ -40,6 +42,29 @@ export const ProjectsList = () => {
     fetchProjects(filters);
   }, [selectedType, searchQuery, fetchProjects]);
 
+  const [ecriture, setEcriture] = useState(false);
+  const sansFiche = (Array.isArray(projects) ? projects : []).filter(
+    (p) => !p.source_path && p.status !== ProjectStatus.ARCHIVED,
+  ).length;
+
+  // Dossier + fiche .md pour chaque projet de l'outil qui n'en a pas encore
+  const ecrireToutesLesFiches = async () => {
+    setEcriture(true);
+    try {
+      const { written } = await projectFoldersApi.writeAll();
+      toast.success(
+        written.length
+          ? `${written.length} fiche(s) écrite(s) dans ton dossier de projets`
+          : 'Tous tes projets ont déjà leur fiche',
+      );
+      fetchProjects();
+    } catch {
+      // l'intercepteur affiche l'erreur (ex. : aucun dossier de projets choisi)
+    } finally {
+      setEcriture(false);
+    }
+  };
+
   const handleCreateProject = () => {
     navigate('/projects/new');
   };
@@ -64,6 +89,17 @@ export const ProjectsList = () => {
                 <p className="mt-2 text-ink-soft">Gérez vos projets et suivez leur progression</p>
               </div>
               <div className="flex flex-wrap gap-2 justify-end">
+                {sansFiche > 0 && (
+                  <button
+                    onClick={ecrireToutesLesFiches}
+                    disabled={ecriture}
+                    title="Crée un dossier et une fiche .md, dans ton dossier de projets, pour chaque projet qui n'en a pas"
+                    className="flex items-center gap-2 px-4 py-2 border border-ink-line text-ink hover:border-accent hover:text-accent disabled:opacity-40 transition-colors font-medium"
+                  >
+                    <FolderDown className="w-5 h-5" />
+                    {ecriture ? 'Écriture…' : `Écrire les fiches (${sansFiche})`}
+                  </button>
+                )}
                 <MarkdownImport />
                 <button
                   onClick={handleCreateProject}

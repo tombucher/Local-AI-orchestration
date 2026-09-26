@@ -184,6 +184,7 @@ export const ProjectDetail = () => {
         onEdit={() => navigate(`/projects/${id}/edit`)}
         onMoodboard={() => navigate(`/projects/${id}/moodboard`)}
         onDelete={() => setConfirmDelete(true)}
+        onFileWritten={() => fetchProject(project.id)}
       />
 
       {inIdeation ? (

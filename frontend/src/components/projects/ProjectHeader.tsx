@@ -5,6 +5,7 @@
 import { Edit, FileText, Image, Sparkles, Trash2 } from 'lucide-react';
 import type { Project } from '../../types/project.types';
 import { Badge } from '../Badge';
+import WriteMarkdownButton from './WriteMarkdownButton';
 
 interface ProjectHeaderProps {
   project: Project;
@@ -12,6 +13,7 @@ interface ProjectHeaderProps {
   onEdit: () => void;
   onMoodboard: () => void;
   onDelete: () => void;
+  onFileWritten: () => void;
 }
 
 const typeLabels: Record<string, string> = {
@@ -20,7 +22,7 @@ const typeLabels: Record<string, string> = {
   research: 'Recherche',
 };
 
-export const ProjectHeader = ({ project, onAnalyze, onEdit, onMoodboard, onDelete }: ProjectHeaderProps) => (
+export const ProjectHeader = ({ project, onAnalyze, onEdit, onMoodboard, onDelete, onFileWritten }: ProjectHeaderProps) => (
   <div className="bg-paper-card shadow-card border border-ink-line p-6 mb-6">
     {/* Quand la place manque, les boutons passent sous le titre au lieu de l'écraser */}
     <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
@@ -41,6 +43,7 @@ export const ProjectHeader = ({ project, onAnalyze, onEdit, onMoodboard, onDelet
           <Image className="w-4 h-4" />
           Moodboard
         </button>
+        <WriteMarkdownButton projectId={project.id} hasFile={!!project.source_path} onWritten={onFileWritten} />
         <button onClick={onDelete} className="flex items-center gap-2 px-4 py-2 text-white bg-danger hover:opacity-90 transition-colors">
           <Trash2 className="w-4 h-4" />
           Supprimer

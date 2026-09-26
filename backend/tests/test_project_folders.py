@@ -297,3 +297,90 @@ async def test_api_deposer_une_fiche(client, auth_headers, mac):
     r = await client.post("/api/v1/projects/import-md", headers=auth_headers,
                           files={"file": ("image.png", b"x", "image/png")})
     assert r.status_code == 400
+
+
+# ------------------------------------------------ outil → fiche (bouton) --
+
+async def _projet_outil(client, auth_headers, db):
+    """Projet créé dans l'outil, avec tâches, dépendance, veille et tâche finie."""
+    from app.models.task import TaskPriority
+    from datetime import datetime, timezone
+
+    pid = (await client.post("/api/v1/projects/", json={
+        "name": "Expo Lyon 2027", "type": "personal", "features": {"code_gen": True},
+        "description": "Installation sonore.\n## Pas une tâche",
+    }, headers=auth_headers)).json()["id"]
+    veille = Task(project_id=pid, title="Veille festivals", task_type=TaskType.VEILLE,
+                  status=TaskStatus.COMPLETED, task_metadata={"scope": "cultural", "keywords": ["son", "Lyon"]})
+    note = Task(project_id=pid, title="Note d'intention", task_type=TaskType.DOCUMENT_WRITING,
+                status=TaskStatus.CREATED, priority=TaskPriority.P1,
+                description="Ton personnel.\n## Contexte\n- [ ] Origine",
+                due_date=datetime(2026, 11, 2, 18, tzinfo=timezone.utc))
+    doublon = Task(project_id=pid, title="note d'intention", task_type=TaskType.DOCUMENT_WRITING,
+                   status=TaskStatus.CREATED)
+    db.add_all([veille, note, doublon])
+    await db.flush()
+    await db.execute(task_dependencies.insert().values(task_id=note.id, depends_on_id=veille.id))
+    await db.commit()
+    return pid
+
+
+@pytest.mark.asyncio
+async def test_bouton_ecrit_dossier_et_fiche_relue_a_l_identique(client, auth_headers, db_session, moi, mac):
+    pid = await _projet_outil(client, auth_headers, db_session)
+    r = await client.post(f"/api/v1/projects/{pid}/write-md", headers=auth_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["created"] and r.json()["path"] == "Projets/Expo Lyon 2027/Expo Lyon 2027.md"
+
+    texte = (mac / "Projets" / "Expo Lyon 2027" / "Expo Lyon 2027.md").read_text(encoding="utf-8")
+    assert "## [x] Veille festivals\ntype: veille culturelle · mots-clés: son, Lyon" in texte
+    assert "type: document · échéance: 02/11/2026 · après: Veille festivals · priorité: haute" in texte
+    assert "### Contexte" in texte and "### Pas une tâche" in texte   # titres abaissés
+    assert "## note d'intention (2)" in texte                        # doublon rendu distinct
+
+    avant = {t.title: (t.status, t.task_type) for t in (await _taches(db_session, pid)).values()}
+    rapport = await pf.sync_user(db_session, moi)
+    assert rapport.created == [] and rapport.warnings == []
+    apres = {t.title: (t.status, t.task_type) for t in (await _taches(db_session, pid)).values()}
+    assert apres == avant  # la synchronisation suivante ne change rien
+
+
+@pytest.mark.asyncio
+async def test_bouton_ne_perd_pas_une_modification_de_la_fiche(client, auth_headers, db_session, moi, mac):
+    pid = await _projet_outil(client, auth_headers, db_session)
+    await client.post(f"/api/v1/projects/{pid}/write-md", headers=auth_headers)
+    fiche = mac / "Projets" / "Expo Lyon 2027" / "Expo Lyon 2027.md"
+    fiche.write_text(fiche.read_text(encoding="utf-8") + "\n## Ajout à la main\n", encoding="utf-8")
+
+    r = await client.post(f"/api/v1/projects/{pid}/write-md", headers=auth_headers)
+    assert r.status_code == 412
+    assert "Ajout à la main" in fiche.read_text(encoding="utf-8")
+
+    r = await client.post(f"/api/v1/projects/{pid}/write-md", params={"force": True}, headers=auth_headers)
+    assert r.status_code == 200 and not r.json()["created"]
+    assert "Ajout à la main" not in fiche.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_bouton_sans_dossier_configure(client, auth_headers, db_session, mac):
+    pid = await _projet_outil(client, auth_headers, db_session)
+    r = await client.post(f"/api/v1/projects/{pid}/write-md", headers=auth_headers)
+    assert r.status_code == 409 and "Paramètres" in r.json().get("message", r.text)
+
+
+@pytest.mark.asyncio
+async def test_ecrire_toutes_les_fiches(client, auth_headers, db_session, moi, mac):
+    await _projet_outil(client, auth_headers, db_session)
+    archive = (await client.post("/api/v1/projects/", json={
+        "name": "Vieux projet", "type": "personal", "features": {"code_gen": True},
+    }, headers=auth_headers)).json()["id"]
+    projet = (await db_session.execute(select(Project).where(Project.id == archive))).scalar_one()
+    from app.models.project import ProjectStatus
+    projet.status = ProjectStatus.ARCHIVED
+    await db_session.commit()
+
+    r = await client.post("/api/v1/projects/write-md-all", headers=auth_headers)
+    assert [p["name"] for p in r.json()["written"]] == ["Expo Lyon 2027"]
+    # Une seconde fois : plus rien à écrire
+    r = await client.post("/api/v1/projects/write-md-all", headers=auth_headers)
+    assert r.json()["written"] == []
