@@ -3,8 +3,9 @@ API endpoints for User Settings
 """
 import logging
 from datetime import datetime, timezone
-from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +21,7 @@ from app.schemas.rss_feed import (
     FeedCheckResult, RssFeedCreate, RssFeedResponse, RssFeedUpdate,
 )
 from app.services.feed_library import inspect_feed
+from app.services import project_folders
 from app.services.llm_client import OllamaClient
 
 logger = logging.getLogger(__name__)
@@ -285,3 +287,96 @@ async def _get_own_feed(db: AsyncSession, feed_id: int, user_id: int) -> RssFeed
     if not feed:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Flux introuvable")
     return feed
+
+
+# ------------------------------------------------------ dossier de projets --
+
+class ProjectsFolderUpdate(BaseModel):
+    path: Optional[str] = None  # relatif au dossier partagé ; None = désactiver
+
+
+async def _own_settings(db: AsyncSession, user: User) -> UserSettings:
+    user_settings = (await db.execute(
+        select(UserSettings).where(UserSettings.user_id == user.id))).scalars().first()
+    if not user_settings:
+        user_settings = UserSettings(user_id=user.id, ollama_model_code=app_settings.OLLAMA_MODEL_CODE)
+        db.add(user_settings)
+        await db.flush()
+    return user_settings
+
+
+def _folder_state(folder: Optional[str]) -> dict:
+    etat = {
+        "available": project_folders.mount_available(),
+        "root_display": project_folders.display_path(),
+        "path": folder,
+        "display": project_folders.display_path(folder) if folder else None,
+        "projects": [],
+    }
+    if folder and etat["available"]:
+        try:
+            racine = project_folders.inside_mount(folder)
+            etat["projects"] = [
+                {"folder": f.parent.name, "file": f.name, "path": project_folders.relative(f)}
+                for f in project_folders.scan(racine)
+            ]
+        except ValueError:
+            pass
+    return etat
+
+
+@router.get("/projects-folder")
+async def get_projects_folder(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Dossier de projets choisi, et les projets qu'il contient."""
+    return _folder_state((await _own_settings(db, current_user)).projects_folder)
+
+
+@router.get("/projects-folder/browse")
+async def browse_projects_folder(
+    path: str = Query("", description="Dossier relatif au dossier partagé"),
+    current_user: User = Depends(get_current_user),
+):
+    """Sous-dossiers d'un dossier, pour choisir le dossier de projets."""
+    if not project_folders.mount_available():
+        raise HTTPException(status_code=409, detail="Aucun dossier du Mac n'est partagé avec l'outil.")
+    try:
+        return project_folders.browse(path)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.put("/projects-folder")
+async def set_projects_folder(
+    payload: ProjectsFolderUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Choisit (ou retire) le dossier de projets, puis synchronise aussitôt."""
+    user_settings = await _own_settings(db, current_user)
+    chemin = (payload.path or "").strip("/") or None
+    if chemin is not None:
+        try:
+            dossier = project_folders.inside_mount(chemin)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        if not dossier.is_dir():
+            raise HTTPException(status_code=400, detail="Ce dossier n'existe pas.")
+        chemin = project_folders.relative(dossier)
+    user_settings.projects_folder = chemin
+    await db.commit()
+
+    rapport = await project_folders.sync_user(db, current_user.id) if chemin else None
+    return {**_folder_state(chemin), "report": rapport.as_dict() if rapport else None}
+
+
+@router.post("/projects-folder/sync")
+async def sync_projects_folder(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Synchronise tout de suite (sinon : automatiquement, toutes les 30 secondes)."""
+    rapport = await project_folders.sync_user(db, current_user.id)
+    return rapport.as_dict()

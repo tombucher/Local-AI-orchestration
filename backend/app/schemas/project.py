@@ -75,6 +75,8 @@ class ProjectResponse(ProjectBase):
     # Absent du schéma, le score n'atteignait jamais l'écran : la jauge affichait
     # 0/100 alors que la base contenait 90.
     maturity_score: int = 0
+    # Fiche .md d'origine (projet tenu dans un dossier du Mac), sinon None
+    source_path: Optional[str] = None
     # Statistiques optionnelles (pour la liste de projets)
     tasks_total: Optional[int] = None
     tasks_completed: Optional[int] = None

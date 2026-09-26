@@ -37,6 +37,12 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3000",
     ]
     
+    # Dossier du Mac partagé avec le conteneur (docker-compose : ~/Documents par
+    # défaut), où l'on choisit son dossier de projets. PROJECTS_MOUNT_DISPLAY est
+    # le même dossier vu depuis le Mac, pour afficher des chemins parlants.
+    PROJECTS_MOUNT: str = "/mac"
+    PROJECTS_MOUNT_DISPLAY: str = ""
+
     # Fuseau de l'utilisateur : heure du briefing et « aujourd'hui ». Le conteneur
     # tourne en UTC — le briefing de « 8 h » tombait à 10 h à Paris.
     TIMEZONE: str = "Europe/Paris"

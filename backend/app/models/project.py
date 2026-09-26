@@ -48,6 +48,11 @@ class Project(Base):
     # Score de maturité du projet (0-100)
     maturity_score = Column(Integer, default=0, nullable=False)
 
+    # Projet tenu dans un dossier du Mac : fiche .md (chemin relatif au dossier
+    # de projets de l'utilisateur) et empreinte de la dernière version importée
+    source_path = Column(String(1000), nullable=True, index=True)
+    source_hash = Column(String(64), nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     

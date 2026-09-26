@@ -16,6 +16,7 @@ import { ProjectCard } from '../../components/ProjectCard';
 import { EmptyState } from '../../components/EmptyState';
 import { ProjectType } from '../../types/project.types';
 import Loader from '../../components/ui/Loader';
+import MarkdownImport from '../../components/projects/MarkdownImport';
 
 const projectTypes: { value: ProjectType | 'all'; label: string }[] = [
   { value: 'all', label: 'Tous' },
@@ -57,18 +58,21 @@ export const ProjectsList = () => {
         <main className="flex-1 p-6 lg:p-8">
           {/* Header */}
           <div className="mb-8">
-            <div className="flex items-center justify-between mb-6">
+            <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
               <div>
                 <h1 className="text-3xl font-bold text-ink">Projets</h1>
                 <p className="mt-2 text-ink-soft">Gérez vos projets et suivez leur progression</p>
               </div>
-              <button
-                onClick={handleCreateProject}
-                className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-none hover:bg-primary/90 transition-colors font-medium"
-              >
-                <Plus className="w-5 h-5" />
-                Nouveau projet
-              </button>
+              <div className="flex flex-wrap gap-2 justify-end">
+                <MarkdownImport />
+                <button
+                  onClick={handleCreateProject}
+                  className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-none hover:bg-primary/90 transition-colors font-medium"
+                >
+                  <Plus className="w-5 h-5" />
+                  Nouveau projet
+                </button>
+              </div>
             </div>
 
             {/* Filtres */}

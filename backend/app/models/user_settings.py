@@ -64,6 +64,10 @@ class UserSettings(Base):
         nullable=True
     )
 
+    # Dossier de projets (relatif au dossier du Mac partagé avec Docker) : un
+    # sous-dossier par projet, contenant sa fiche .md. None = désactivé.
+    projects_folder: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

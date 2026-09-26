@@ -2,7 +2,7 @@
  * En-tête de la page projet : titre, type, description, dépôt, actions.
  */
 
-import { Edit, Image, Sparkles, Trash2 } from 'lucide-react';
+import { Edit, FileText, Image, Sparkles, Trash2 } from 'lucide-react';
 import type { Project } from '../../types/project.types';
 import { Badge } from '../Badge';
 
@@ -22,12 +22,13 @@ const typeLabels: Record<string, string> = {
 
 export const ProjectHeader = ({ project, onAnalyze, onEdit, onMoodboard, onDelete }: ProjectHeaderProps) => (
   <div className="bg-paper-card shadow-card border border-ink-line p-6 mb-6">
-    <div className="flex items-start justify-between gap-4 mb-4">
-      <div className="flex-1 min-w-0">
+    {/* Quand la place manque, les boutons passent sous le titre au lieu de l'écraser */}
+    <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
+      <div className="flex-1 min-w-[16rem]">
         <h1 className="font-display text-3xl text-ink mb-3">{project.name}</h1>
         <Badge label={typeLabels[project.type] || project.type} variant={project.type} />
       </div>
-      <div className="flex flex-wrap gap-2 shrink-0 justify-end">
+      <div className="flex flex-wrap gap-2 justify-end">
         <button onClick={onAnalyze} className="flex items-center gap-2 px-4 py-2 text-white bg-accent hover:bg-accent-deep transition-colors">
           <Sparkles className="w-4 h-4" />
           Analyser avec l'IA
@@ -47,7 +48,16 @@ export const ProjectHeader = ({ project, onAnalyze, onEdit, onMoodboard, onDelet
       </div>
     </div>
 
-    {project.description && <p className="text-ink-soft mb-4">{project.description}</p>}
+    {project.description && <p className="text-ink-soft mb-4 whitespace-pre-line">{project.description}</p>}
+
+    {project.source_path && (
+      <p className="flex items-center gap-2 text-sm text-ink-faint mb-4 min-w-0">
+        <FileText className="w-4 h-4 shrink-0" />
+        <span className="shrink-0">Tenu dans</span>
+        <code className="font-mono text-xs truncate">{project.source_path}</code>
+        <span className="hidden sm:inline shrink-0">— modifie la fiche, le projet suit.</span>
+      </p>
+    )}
 
     {project.repository_url && (
       <div className="text-sm text-ink-faint">

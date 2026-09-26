@@ -114,6 +114,10 @@ services:
     volumes:
       - ./backend:/app
       - /app/__pycache__
+      # Dossier du Mac où l'on choisit son dossier de projets (Paramètres) : une
+      # fiche .md par projet. Pour partager un autre dossier, définir
+      # PROJECTS_HOST_DIR dans .env.
+      - ${PROJECTS_HOST_DIR:-${HOME}/Documents}:/mac
     ports:
       - "8000:8000"
     # Toutes les variables de .env (clés API, modèle rapide, CORS…) sont transmises ;
@@ -126,6 +130,8 @@ services:
       - ENV=development
       - LOG_LEVEL=INFO
       - SECRET_KEY=${SECRET_KEY:?SECRET_KEY manquant dans .env}
+      - PROJECTS_MOUNT=/mac
+      - PROJECTS_MOUNT_DISPLAY=${PROJECTS_HOST_DIR:-${HOME}/Documents}
     depends_on:
       postgres:
         condition: service_healthy

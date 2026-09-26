@@ -40,9 +40,33 @@ from app.services.project_analyzer import ProjectAnalyzer, TaskSuggestion, Analy
 from app.services.critical_path import CriticalPathService
 from app.services.maturity import MaturityService
 from app.services.project_export import build_zip, collect_project_files, entry_page, zip_filename
+from app.services.project_folders import MAX_TAILLE_FICHE, import_markdown_file
 from app.models.veille_topic import VeilleTopic, VeilleScope
 
 router = APIRouter()
+
+
+@router.post("/import-md", status_code=status.HTTP_201_CREATED)
+async def import_project_markdown(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Crée un projet à partir d'une fiche .md déposée.
+
+    Si un dossier de projets est configuré, la fiche y est rangée dans un
+    nouveau dossier et le projet se synchronise ensuite avec elle.
+    """
+    if not (file.filename or "").lower().endswith((".md", ".markdown", ".txt")):
+        raise HTTPException(status_code=400, detail="Dépose un fichier .md (ou .txt).")
+    brut = await file.read(MAX_TAILLE_FICHE + 1)
+    if len(brut) > MAX_TAILLE_FICHE:
+        raise HTTPException(status_code=413, detail="Fiche trop volumineuse (512 Ko maximum).")
+    texte = brut.decode("utf-8", errors="replace")
+    if not texte.strip():
+        raise HTTPException(status_code=400, detail="Le fichier est vide.")
+    projet = await import_markdown_file(db, current_user.id, file.filename, texte)
+    return {"id": projet.id, "name": projet.name, "source_path": projet.source_path}
 
 
 @router.get("/", response_model=ProjectList)

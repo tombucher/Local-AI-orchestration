@@ -243,6 +243,31 @@ async def watchdog_generating_tasks_job() -> None:
             logger.error(f"❌ Watchdog job failed: {e}", exc_info=True)
 
 
+async def sync_project_folders_job() -> None:
+    """Job APScheduler : fiches .md des dossiers de projets ↔ outil."""
+    from app.models.user_settings import UserSettings
+    from app.services import project_folders
+
+    if not project_folders.mount_available():
+        return
+    async with AsyncSessionLocal() as db:
+        user_ids = (await db.execute(
+            select(UserSettings.user_id).where(UserSettings.projects_folder.isnot(None))
+        )).scalars().all()
+        for user_id in user_ids:
+            try:
+                rapport = await project_folders.sync_user(db, user_id)
+                if rapport.created or rapport.updated or rapport.checked or rapport.exported:
+                    logger.info(
+                        f"📁 Dossiers de projets (utilisateur {user_id}) : "
+                        f"{len(rapport.created)} créés, {len(rapport.updated)} mis à jour, "
+                        f"{len(rapport.checked)} cases cochées, {len(rapport.exported)} fichiers écrits"
+                    )
+            except Exception as e:
+                await db.rollback()
+                logger.error(f"❌ Synchronisation des dossiers (utilisateur {user_id}) : {e}", exc_info=True)
+
+
 def start_scheduler() -> None:
     """
     Démarre le scheduler APScheduler
@@ -301,13 +326,25 @@ def start_scheduler() -> None:
         next_run_time=datetime.now(timezone.utc) + WATCHDOG_GRACE + timedelta(seconds=30),
     )
 
+    # Job 5: Dossiers de projets — une fiche .md enregistrée se retrouve dans l'outil
+    scheduler.add_job(
+        sync_project_folders_job,
+        trigger=IntervalTrigger(seconds=30),
+        id='sync_project_folders',
+        name='Sync project folders',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+
     scheduler.start()
     logger.info(
         f"🚀 Scheduler started\n"
         f"   - Task queue processing: every {settings.ORCHESTRATOR_INTERVAL_MINUTES} min\n"
         f"   - Daily reports: every day at {settings.BRIEFING_HOUR}:00 ({settings.TIMEZONE})\n"
         f"   - Veille recurrence check: every 15 min\n"
-        f"   - Watchdog (stuck tasks): every 5 min"
+        f"   - Watchdog (stuck tasks): every 5 min\n"
+        f"   - Project folders sync: every 30 s"
     )
 
 

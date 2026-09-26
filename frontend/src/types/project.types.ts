@@ -38,6 +38,7 @@ export interface Project {
   features: ProjectFeatures;
   financial_config: FinancialConfig | null;
   maturity_score: number;  // Score de maturité (0-100)
+  source_path?: string | null;  // fiche .md d'origine (dossier de projets)
   repository_url?: string | null;
   created_at: string;
   updated_at: string;
