@@ -2,7 +2,7 @@
  * Réglage de la notification du briefing du matin (navigateur, 100 % local).
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Bell, BellOff } from 'lucide-react';
 import {
   notificationBriefingActive,
@@ -10,11 +10,75 @@ import {
   reglerNotificationBriefing,
 } from '../Layout/BriefingNotifier';
 
+type Navigateur = 'safari' | 'firefox' | 'chromium';
+
+const detecterNavigateur = (): Navigateur => {
+  const ua = navigator.userAgent;
+  if (/Firefox\//.test(ua)) return 'firefox';
+  if (/Safari\//.test(ua) && !/(Chrome|Chromium|CriOS|Edg)\//.test(ua)) return 'safari';
+  return 'chromium'; // Chrome, Arc, Brave, Edge…
+};
+
+/**
+ * Une permission refusée ne peut plus être redemandée par la page : seul le
+ * navigateur peut la rétablir. On donne donc le chemin exact, selon le navigateur.
+ */
+const DebloquerNotifications = () => {
+  const site = window.location.host;
+  const etapes: Record<Navigateur, string[]> = {
+    safari: [
+      'Menu Safari → Réglages… → onglet « Sites web »',
+      'Dans la colonne de gauche : « Notifications »',
+      `En face de ${site} : choisir « Autoriser »`,
+    ],
+    chromium: [
+      "Clique sur l'icône à gauche de l'adresse (réglages du site)",
+      '« Notifications » → « Autoriser »',
+      'Recharge la page',
+    ],
+    firefox: [
+      "Clique sur l'icône à gauche de l'adresse (autorisations)",
+      '« Envoyer des notifications » : clique sur la croix pour retirer le blocage',
+      'Recharge la page',
+    ],
+  };
+  return (
+    <div className="mt-4 border border-warning bg-warning/10 p-4 text-sm">
+      <p className="text-ink font-medium">
+        Tu as refusé les notifications pour {site} : le navigateur ne laisse plus l'outil
+        les redemander. Pour les rétablir :
+      </p>
+      <ol className="mt-2 list-decimal pl-5 space-y-1 text-ink-soft">
+        {etapes[detecterNavigateur()].map((etape) => (
+          <li key={etape}>{etape}</li>
+        ))}
+        <li>Reviens ici et clique sur « Activer la notification ».</li>
+      </ol>
+      <p className="mt-2 text-xs text-ink-faint">
+        Si rien ne s'affiche ensuite : Réglages Système du Mac → Notifications → ton navigateur
+        → « Autoriser les notifications ».
+      </p>
+    </div>
+  );
+};
+
 export const BriefingSettings = () => {
   const [active, setActive] = useState(notificationBriefingActive());
   const [refusee, setRefusee] = useState(
     notificationsSupportees() && Notification.permission === 'denied',
   );
+
+  // Au retour sur l'onglet (après être passé par les réglages du navigateur)
+  useEffect(() => {
+    if (!notificationsSupportees()) return;
+    const reverifier = () => setRefusee(Notification.permission === 'denied');
+    window.addEventListener('focus', reverifier);
+    document.addEventListener('visibilitychange', reverifier);
+    return () => {
+      window.removeEventListener('focus', reverifier);
+      document.removeEventListener('visibilitychange', reverifier);
+    };
+  }, []);
 
   const basculer = async () => {
     const resultat = await reglerNotificationBriefing(!active);
@@ -60,12 +124,7 @@ export const BriefingSettings = () => {
           <p className="text-sm text-ink-faint">Ce navigateur ne gère pas les notifications.</p>
         )}
       </div>
-      {refusee && (
-        <p className="mt-3 text-sm text-warning">
-          Le navigateur a bloqué les notifications pour ce site : autorise-les dans ses
-          réglages, puis réessaie.
-        </p>
-      )}
+      {refusee && <DebloquerNotifications />}
     </div>
   );
 };
