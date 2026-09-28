@@ -122,9 +122,11 @@ export const assemblerApercu = (entry: string, files: CodeFile[]): string => {
 
 interface Props {
   projectId: number;
+  /** Dans son onglet : dire qu'il n'y a encore rien, plutôt que ne rien afficher */
+  afficherSiVide?: boolean;
 }
 
-export const ProjectOutputs = ({ projectId }: Props) => {
+export const ProjectOutputs = ({ projectId, afficherSiVide = false }: Props) => {
   const [data, setData] = useState<ProjectFilesResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [apercu, setApercu] = useState(false);
@@ -220,7 +222,18 @@ export const ProjectOutputs = ({ projectId }: Props) => {
   };
 
   if (loading && !data) return null;
-  if (!data || (data.code.length === 0 && data.documents.length === 0)) return null;
+  if (!data || (data.code.length === 0 && data.documents.length === 0)) {
+    return afficherSiVide ? (
+      <div className="bg-paper-card shadow-card border border-ink-line p-10 text-center">
+        <Package className="w-8 h-8 text-ink-faint mx-auto mb-3" />
+        <p className="text-ink">Rien de produit pour l'instant.</p>
+        <p className="text-sm text-ink-soft mt-1">
+          Les résultats des tâches — code, documents, veilles — apparaîtront ici, avec l'aperçu du site
+          et le téléchargement.
+        </p>
+      </div>
+    ) : null;
+  }
 
   const fichierOuvert = data.code.find((f) => f.path === ouvert);
 

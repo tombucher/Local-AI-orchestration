@@ -8,8 +8,8 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ChevronRight, Home } from 'lucide-react';
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
+import { ChevronRight, Home, MessagesSquare } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useProjectsStore } from '../../stores/projectsStore';
 import { Navbar } from '../../components/Layout/Navbar';
@@ -27,7 +27,7 @@ import Loader from '../../components/ui/Loader';
 import { tasksService } from '../../services/tasks';
 import api from '../../services/api';
 import { ProjectStatus } from '../../types/project.types';
-import type { Task } from '../../types/task.types';
+import { TaskStatus, type Task } from '../../types/task.types';
 import type { CriticalPathData, CriticalPathTaskData } from '../../types/critical-path.types';
 
 const PageShell = ({ children }: { children: React.ReactNode }) => (
@@ -40,6 +40,15 @@ const PageShell = ({ children }: { children: React.ReactNode }) => (
   </div>
 );
 
+const ONGLETS = [
+  { id: 'taches', libelle: 'Tâches' },
+  { id: 'discussion', libelle: 'Discussion' },
+  { id: 'production', libelle: 'Production' },
+  { id: 'documents', libelle: 'Documents' },
+  { id: 'suivi', libelle: 'Suivi' },
+] as const;
+type Onglet = (typeof ONGLETS)[number]['id'];
+
 export const ProjectDetail = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -48,6 +57,13 @@ export const ProjectDetail = () => {
   const [tasksLoading, setTasksLoading] = useState(false);
   const [criticalPathData, setCriticalPathData] = useState<CriticalPathData | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+
+  // Onglet dans l'adresse (?onglet=production) : un lien ou le retour arrière y ramène
+  const [parametres, setParametres] = useSearchParams();
+  const demande = parametres.get('onglet');
+  const onglet: Onglet = ONGLETS.some((o) => o.id === demande) ? (demande as Onglet) : 'taches';
+  const choisirOnglet = (cle: Onglet) =>
+    setParametres(cle === 'taches' ? {} : { onglet: cle }, { replace: true });
   const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
@@ -167,6 +183,7 @@ export const ProjectDetail = () => {
 
   const project = currentProject;
   const inIdeation = project.status === ProjectStatus.IDEATION;
+  const tasksActives = tasks.filter((t) => t.status !== TaskStatus.CANCELLED).length;
 
   return (
     <PageShell>
@@ -181,6 +198,8 @@ export const ProjectDetail = () => {
 
       <ProjectHeader
         project={project}
+        tasks={tasks}
+        onDiscuss={() => choisirOnglet('discussion')}
         onAnalyze={() => navigate(`/projects/${id}/analyze`)}
         onEdit={() => navigate(`/projects/${id}/edit`)}
         onMoodboard={() => navigate(`/projects/${id}/moodboard`)}
@@ -194,26 +213,78 @@ export const ProjectDetail = () => {
         </div>
       ) : (
         <>
-          <ProjectFeaturesPanel project={project} />
-          {/* key : une discussion par projet (sinon l'état survit au changement de projet) */}
-          {currentProjectStats && (
+          {/* Onglets : la page empilait neuf blocs, les tâches tout en bas */}
+          <div className="flex flex-wrap gap-x-1 border-b border-ink-line mb-6" role="tablist">
+            {ONGLETS.map(({ id: cle, libelle }) => {
+              const actif = onglet === cle;
+              const nombre = cle === 'taches' ? tasksActives : null;
+              return (
+                <button
+                  key={cle}
+                  role="tab"
+                  aria-selected={actif}
+                  onClick={() => choisirOnglet(cle)}
+                  className={`px-4 py-2.5 -mb-px text-sm font-medium border-b-2 transition-colors ${
+                    actif ? 'border-accent text-ink' : 'border-transparent text-ink-soft hover:text-ink hover:border-ink-line'
+                  }`}
+                >
+                  {libelle}
+                  {nombre !== null && <span className="ml-1.5 text-xs text-ink-faint figures">{nombre}</span>}
+                </button>
+              );
+            })}
+          </div>
+
+          {onglet === 'taches' && (
+            <>
+              {!tasksLoading && tasksActives === 0 && (
+                <div className="bg-paper-card border border-accent p-6 mb-6 flex flex-wrap items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="font-display text-lg text-ink">Pas encore de tâches</p>
+                    <p className="text-sm text-ink-soft mt-1 max-w-xl">
+                      Le plus simple : en discuter avec l'IA. Elle connaît la description du projet,
+                      te pose des questions, puis te propose des tâches que tu choisis.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => choisirOnglet('discussion')}
+                    className="shrink-0 inline-flex items-center gap-2 px-4 py-2 bg-accent text-white hover:opacity-90 text-sm font-medium"
+                  >
+                    <MessagesSquare className="w-4 h-4" />
+                    Discuter avec l'IA
+                  </button>
+                </div>
+              )}
+              <ProjectTasksBoard projectId={project.id} tasks={tasks} loading={tasksLoading} criticalPathMap={criticalPathMap} taskOrder={taskOrder} />
+            </>
+          )}
+
+          {onglet === 'discussion' && (
             <ProjectDiscussion
               key={project.id}
               projectId={project.id}
-              sansTaches={currentProjectStats.total_tasks === 0}
+              sansTaches={tasksActives === 0}
+              ouverteDemblee
             />
           )}
-          <ProjectOutputs projectId={project.id} />
-          <ProjectDocuments projectId={project.id} />
-          <ProjectHealthDashboard
-            project={project}
-            stats={currentProjectStats}
-            criticalPath={criticalPathData}
-            onResizeTask={handleResizeTask}
-            onLinkTasks={handleLinkTasks}
-          />
-          <ProjectFinancialPanel project={project} />
-          <ProjectTasksBoard projectId={project.id} tasks={tasks} loading={tasksLoading} criticalPathMap={criticalPathMap} taskOrder={taskOrder} />
+
+          {onglet === 'production' && <ProjectOutputs projectId={project.id} afficherSiVide />}
+
+          {onglet === 'documents' && <ProjectDocuments projectId={project.id} />}
+
+          {onglet === 'suivi' && (
+            <>
+              <ProjectHealthDashboard
+                project={project}
+                stats={currentProjectStats}
+                criticalPath={criticalPathData}
+                onResizeTask={handleResizeTask}
+                onLinkTasks={handleLinkTasks}
+              />
+              <ProjectFinancialPanel project={project} />
+              <ProjectFeaturesPanel project={project} />
+            </>
+          )}
         </>
       )}
 

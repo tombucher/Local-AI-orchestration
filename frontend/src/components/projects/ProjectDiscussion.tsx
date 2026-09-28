@@ -16,13 +16,15 @@ import { ideationService } from '../../services/ideation';
 interface Props {
   projectId: number;
   sansTaches: boolean;
+  /** Dans son onglet : ouverte d'emblée (on y est venu pour discuter) */
+  ouverteDemblee?: boolean;
 }
 
-export const ProjectDiscussion = ({ projectId, sansTaches }: Props) => {
+export const ProjectDiscussion = ({ projectId, sansTaches, ouverteDemblee = false }: Props) => {
   const navigate = useNavigate();
   // Fermé par défaut : ouvrir la discussion lance le modèle local (lent, et il
   // bloque les autres tâches pendant ce temps) — pas à la simple visite de la page
-  const [ouvert, setOuvert] = useState(false);
+  const [ouvert, setOuvert] = useState(ouverteDemblee);
   const [envoi, setEnvoi] = useState(false);
 
   const proposerDesTaches = async () => {
@@ -51,16 +53,18 @@ export const ProjectDiscussion = ({ projectId, sansTaches }: Props) => {
             </p>
           </div>
         </div>
-        <button
-          onClick={() => setOuvert((v) => !v)}
-          className={`shrink-0 px-4 py-2 text-sm transition-colors ${
-            sansTaches && !ouvert
-              ? 'bg-accent text-white hover:opacity-90'
-              : 'border border-ink-line text-ink hover:border-accent hover:text-accent'
-          }`}
-        >
-          {ouvert ? 'Réduire' : 'Ouvrir la discussion'}
-        </button>
+        {!ouverteDemblee && (
+          <button
+            onClick={() => setOuvert((v) => !v)}
+            className={`shrink-0 px-4 py-2 text-sm transition-colors ${
+              sansTaches && !ouvert
+                ? 'bg-accent text-white hover:opacity-90'
+                : 'border border-ink-line text-ink hover:border-accent hover:text-accent'
+            }`}
+          >
+            {ouvert ? 'Réduire' : 'Ouvrir la discussion'}
+          </button>
+        )}
       </div>
 
       {ouvert && (
