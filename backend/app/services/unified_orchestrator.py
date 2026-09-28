@@ -34,6 +34,7 @@ from app.services.web_search_service import WebSearchService
 from app.core.config import settings as app_settings
 from app.services.model_registry import resolve_model, supports_vision, think_kwargs
 from app.services.project_workspace import build_workspace_context
+from app.services.code_language import effective_path, file_slug
 from app.services.project_memory import build_project_memory, score_against_memory
 from app.services.task_progress import clear_progress, set_progress, task_finished, task_started
 from app.services.project_documents import build_document_context
@@ -337,9 +338,15 @@ class UnifiedOrchestrator:
 
         # Figer le fichier attribué par le plan : les tâches suivantes s'y réfèrent
         if workspace.own_path:
+            # Le contenu fait foi sur le nom prévu : un module Python écrit pour
+            # « index.html » devient un .py (sinon l'aperçu affiche du Python)
+            chemin = effective_path(workspace.own_path, code, file_slug(task.title))
+            if chemin != workspace.own_path:
+                logger.info(f"📄 Tâche {task.id} : contenu {chemin.rsplit('.', 1)[-1]}, "
+                            f"rangé sous {chemin} au lieu de {workspace.own_path}")
             metadata = dict(task.task_metadata or {})
-            if metadata.get('artifact_path') != workspace.own_path:
-                metadata['artifact_path'] = workspace.own_path
+            if metadata.get('artifact_path') != chemin:
+                metadata['artifact_path'] = chemin
                 task.task_metadata = metadata
 
     async def _handle_veille(self, task: Task) -> None:

@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.project import Project
 from app.models.task import Task, TaskStatus, TaskType, task_dependencies
 from app.services.code_contract import extract_contract, format_contract
+from app.services.code_language import effective_path, file_slug
 
 logger = logging.getLogger(__name__)
 
@@ -193,6 +194,12 @@ async def build_workspace_context(
         siblings = list(siblings) + [task]
 
     plan = build_file_plan(list(siblings))
+    # Un fichier déjà écrit dont le contenu contredit l'extension (du Python
+    # nommé index.html) : les tâches suivantes doivent le voir sous son vrai nom
+    for sibling in siblings:
+        if sibling.id != task.id and plan.get(sibling.id) and (sibling.generated_code or '').strip():
+            plan[sibling.id] = effective_path(plan[sibling.id], sibling.generated_code,
+                                              file_slug(sibling.title))
     own_path = plan.get(task.id)
     dependency_ids = set(await _dependency_ids(db, task.id))
 

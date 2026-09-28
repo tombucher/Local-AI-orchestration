@@ -20,6 +20,7 @@ from app.models.project import Project
 from app.models.task import Task, TaskStatus, TaskType
 from app.models.veille_result import VeilleResult, VeilleResultStatus
 from app.services.code_contract import check_coherence
+from app.services.code_language import detect_language, effective_path, file_slug
 from app.services.project_workspace import build_file_plan
 from app.services.task_chain import RESULT_TYPES
 
@@ -27,6 +28,14 @@ from app.services.task_chain import RESULT_TYPES
 # Tout marqueur est reconnu, même au chemin douteux : sinon son contenu se collait
 # au fichier précédent. Les chemins refusés par safe_path sont ensuite écartés.
 _MULTI_FILE = re.compile(r"^===\s*(\S[^=\n]*?)\s*===\s*$", re.MULTILINE)
+
+LIBELLES_LANGAGE = {"py": "Python", "html": "HTML", "htm": "HTML", "css": "CSS", "js": "JavaScript",
+                    "md": "Markdown", "json": "JSON", "php": "PHP", "sh": "shell", "svg": "SVG"}
+
+def _langage(path: str) -> str:
+    extension = path.rsplit(".", 1)[-1].lower()
+    return LIBELLES_LANGAGE.get(extension, extension)
+
 
 TEXT_TYPES = {TaskType.DOCUMENT_WRITING, TaskType.RESEARCH, TaskType.ADMINISTRATIVE}
 
@@ -110,12 +119,17 @@ async def collect_project_files(db: AsyncSession, project: Project) -> ProjectFi
     code_tasks = [t for t in tasks if t.task_type == TaskType.CODE_GENERATION]
     plan = build_file_plan(code_tasks)
     by_path: Dict[str, ProducedFile] = {}
+    renommes: List[str] = []
     for task in code_tasks:
         code = (task.generated_code or "").strip()
         if not code:
             continue
-        path = safe_path((task.task_metadata or {}).get("artifact_path") or plan.get(task.id))
+        prevu = safe_path((task.task_metadata or {}).get("artifact_path") or plan.get(task.id))
+        path = safe_path(effective_path(prevu, code, file_slug(task.title)))
         if path:
+            if path != prevu:
+                renommes.append(f"« {task.title} » contient du {_langage(path)}, pas du {_langage(prevu)} : "
+                                f"rangé sous `{path}` au lieu de `{prevu}`.")
             by_path[path] = ProducedFile(path, code + "\n", task.id, task.title, "code")
         else:
             for sub_path, body in split_multi_file(code).items():
@@ -143,7 +157,7 @@ async def collect_project_files(db: AsyncSession, project: Project) -> ProjectFi
                 f"documents/{rang:02d}-{_slug(task.title)}.md",
                 f"# {task.title}\n\n{task.generated_code.strip()}\n", task.id, task.title, "document"))
 
-    files.coherence = check_coherence({f.path: f.content for f in files.code})
+    files.coherence = renommes + check_coherence({f.path: f.content for f in files.code})
     return files
 
 
@@ -181,8 +195,9 @@ def zip_filename(project: Project) -> str:
 
 
 def entry_page(files: ProjectFiles) -> Optional[str]:
-    """La page d'entrée du site, si le projet en a une."""
-    pages = [f.path for f in files.code if f.path.endswith((".html", ".htm"))]
+    """La page d'entrée du site, si le projet en a une — une vraie page HTML."""
+    pages = [f.path for f in files.code
+             if f.path.endswith((".html", ".htm")) and detect_language(f.content) in ("html", None)]
     if not pages:
         return None
     return "index.html" if "index.html" in pages else pages[0]

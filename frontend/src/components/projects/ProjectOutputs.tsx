@@ -4,10 +4,14 @@
  * Le résultat d'un projet restait éparpillé dans ses tâches : il fallait copier
  * chaque fichier à la main pour voir le site exister. Ici : la liste des fichiers,
  * un aperçu du site en direct, l'archive .zip, et les liens cassés entre fichiers.
+ *
+ * Le mode Diagnostic montre ce que contient vraiment chaque fichier et la console
+ * de l'aperçu : les erreurs JavaScript du site généré restaient invisibles.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Download, Eye, EyeOff, FileCode2, FileText, Package, RefreshCw, Rss } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, Bug, ClipboardCopy, Download, Eye, EyeOff, FileCode2, FileText, Package, RefreshCw, Rss } from 'lucide-react';
+import toast from 'react-hot-toast';
 import api from '../../services/api';
 
 interface CodeFile {
@@ -16,6 +20,7 @@ interface CodeFile {
   task_title: string;
   size: number;
   content: string;
+  language: string | null; // ce que contient vraiment le fichier (py, html, css…)
 }
 
 interface DocumentFile {
@@ -47,6 +52,31 @@ const Alerte = ({ texte }: { texte: string }) => (
     )}
   </>
 );
+
+/** Famille d'une extension, pour comparer au contenu détecté par le serveur */
+const FAMILLES: Record<string, string> = {
+  html: 'html', htm: 'html', css: 'css', scss: 'css', js: 'js', mjs: 'js', jsx: 'js',
+  ts: 'js', tsx: 'js', py: 'py', md: 'md', json: 'json', php: 'php', sh: 'sh', svg: 'svg',
+};
+const familleDe = (chemin: string) => FAMILLES[chemin.split('.').pop()?.toLowerCase() ?? ''] ?? null;
+
+interface MessageConsole {
+  niveau: 'error' | 'warn' | 'log';
+  message: string;
+}
+
+const MARQUE_SONDE = 'apercu-orchestrateur';
+
+/**
+ * Sonde placée en tête de l'aperçu : elle relaie console et erreurs du site vers
+ * l'orchestrateur (postMessage — le cadre reste isolé, sans accès à la page).
+ */
+const SONDE = `<script>(function(){
+function envoyer(n,a){try{parent.postMessage({source:'${MARQUE_SONDE}',niveau:n,message:Array.prototype.map.call(a,function(x){try{return typeof x==='string'?x:JSON.stringify(x)}catch(e){return String(x)}}).join(' ')},'*')}catch(e){}}
+['error','warn','log'].forEach(function(n){var o=console[n];console[n]=function(){envoyer(n,arguments);o.apply(console,arguments)}});
+window.addEventListener('error',function(e){envoyer('error',[e.message+(e.lineno?' (ligne '+e.lineno+')':'')])});
+window.addEventListener('unhandledrejection',function(e){envoyer('error',['Promesse rejetée : '+(e.reason&&e.reason.message||e.reason)])});
+})();</script>`;
 
 const echapperRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -86,7 +116,8 @@ export const assemblerApercu = (entry: string, files: CodeFile[]): string => {
       ? html.replace(/<\/body>/i, `${scriptsDiffere.join('\n')}\n</body>`)
       : `${html}\n${scriptsDiffere.join('\n')}`;
   }
-  return html;
+  // La sonde passe avant tout script du site, pour capter ses premières erreurs
+  return /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (m) => `${m}\n${SONDE}`) : `${SONDE}\n${html}`;
 };
 
 interface Props {
@@ -99,6 +130,9 @@ export const ProjectOutputs = ({ projectId }: Props) => {
   const [apercu, setApercu] = useState(false);
   const [ouvert, setOuvert] = useState<string | null>(null);
   const [telechargement, setTelechargement] = useState(false);
+  const [diagnostic, setDiagnostic] = useState(false);
+  const [consoleApercu, setConsoleApercu] = useState<MessageConsole[]>([]);
+  const cadre = useRef<HTMLIFrameElement>(null);
 
   const charger = useCallback(async () => {
     setLoading(true);
@@ -120,6 +154,51 @@ export const ProjectOutputs = ({ projectId }: Props) => {
     () => (data?.entry && apercu ? assemblerApercu(data.entry, data.code) : ''),
     [data, apercu],
   );
+
+  // Console de l'aperçu : remise à zéro à chaque nouvel aperçu
+  useEffect(() => {
+    setConsoleApercu([]);
+  }, [srcDoc]);
+
+  useEffect(() => {
+    const recevoir = (e: MessageEvent) => {
+      if (e.source !== cadre.current?.contentWindow || e.data?.source !== MARQUE_SONDE) return;
+      const { niveau, message } = e.data as MessageConsole;
+      setConsoleApercu((liste) => [...liste, { niveau, message: String(message).slice(0, 500) }].slice(-100));
+    };
+    window.addEventListener('message', recevoir);
+    return () => window.removeEventListener('message', recevoir);
+  }, []);
+
+  const erreurs = consoleApercu.filter((m) => m.niveau === 'error');
+
+  // Rapport texte à coller dans une conversation pour signaler un problème
+  const copierRapport = async () => {
+    if (!data) return;
+    const lignes = [
+      `Diagnostic — projet ${projectId}`,
+      `Page d'entrée : ${data.entry ?? 'aucune (pas de page HTML)'}`,
+      '',
+      'Fichiers :',
+      ...data.code.map(
+        (f) => `- ${f.path} (${f.size} o) — contenu détecté : ${f.language ?? 'incertain'} — ${f.task_title}`,
+      ),
+      '',
+      'Alertes :',
+      ...(data.coherence.length ? data.coherence.map((a) => `- ${a}`) : ['- aucune']),
+      '',
+      'Console de l\'aperçu :',
+      ...(consoleApercu.length
+        ? consoleApercu.map((m) => `- [${m.niveau}] ${m.message}`)
+        : [apercu ? '- rien' : "- (aperçu non ouvert)"]),
+    ];
+    try {
+      await navigator.clipboard.writeText(lignes.join('\n'));
+      toast.success('Rapport copié');
+    } catch {
+      toast.error('Copie impossible : sélectionne le texte à la main');
+    }
+  };
 
   const telecharger = async () => {
     setTelechargement(true);
@@ -177,6 +256,20 @@ export const ProjectOutputs = ({ projectId }: Props) => {
             </button>
           )}
           <button
+            onClick={() => setDiagnostic((v) => !v)}
+            aria-pressed={diagnostic}
+            title="Ce que contient vraiment chaque fichier, et les erreurs de l'aperçu"
+            className={`inline-flex items-center gap-2 px-3 py-2 border text-sm transition-colors ${
+              diagnostic ? 'border-accent text-accent' : 'border-ink-line text-ink hover:border-accent hover:text-accent'
+            }`}
+          >
+            <Bug className="w-4 h-4" />
+            Diagnostic
+            {erreurs.length > 0 && (
+              <span className="px-1.5 bg-danger text-white text-xs figures">{erreurs.length}</span>
+            )}
+          </button>
+          <button
             onClick={telecharger}
             disabled={telechargement}
             className="inline-flex items-center gap-2 px-4 py-2 bg-accent text-white hover:opacity-90 disabled:opacity-40 transition-opacity text-sm font-medium"
@@ -208,11 +301,86 @@ export const ProjectOutputs = ({ projectId }: Props) => {
           </div>
           {/* allow-scripts sans allow-same-origin : le code généré reste dans sa boîte */}
           <iframe
+            ref={cadre}
             title="Aperçu du site"
             sandbox="allow-scripts allow-forms allow-modals"
             srcDoc={srcDoc}
             className="w-full h-[70vh] bg-white"
           />
+          {erreurs.length > 0 && !diagnostic && (
+            <button
+              onClick={() => setDiagnostic(true)}
+              className="w-full px-3 py-1.5 border-t border-ink-line text-left text-xs text-danger hover:underline"
+            >
+              {erreurs.length} erreur(s) JavaScript dans le site — ouvrir le diagnostic
+            </button>
+          )}
+        </div>
+      )}
+
+      {diagnostic && (
+        <div className="border border-ink-line bg-paper-warm/50 p-4 mb-4 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-medium text-ink flex items-center gap-2">
+              <Bug className="w-4 h-4 text-accent" /> Diagnostic
+            </p>
+            <button
+              onClick={copierRapport}
+              className="inline-flex items-center gap-1.5 px-3 py-1 border border-ink-line text-xs text-ink hover:border-accent hover:text-accent"
+            >
+              <ClipboardCopy className="w-3.5 h-3.5" />
+              Copier le rapport
+            </button>
+          </div>
+
+          <div>
+            <p className="text-xs uppercase tracking-wider text-ink-faint mb-1">Fichiers de code</p>
+            {data.code.length === 0 ? (
+              <p className="text-sm text-ink-faint">Aucun fichier de code.</p>
+            ) : (
+              <ul className="text-sm divide-y divide-ink-line">
+                {data.code.map((f) => {
+                  const attendu = familleDe(f.path);
+                  const discordant = f.language && attendu && f.language !== attendu;
+                  return (
+                    <li key={f.path} className="flex flex-wrap items-baseline gap-x-3 py-1.5">
+                      <span className="font-mono">{f.path}</span>
+                      <span className={discordant ? 'text-danger' : 'text-ink-faint'}>
+                        contenu : {f.language ?? 'incertain'}
+                        {discordant && ` (extension .${f.path.split('.').pop()})`}
+                      </span>
+                      <span className="text-xs text-ink-faint truncate min-w-0">{f.task_title}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            <p className="mt-1 text-xs text-ink-faint">
+              Page d'entrée de l'aperçu : {data.entry ?? 'aucune — ce projet ne contient pas de page HTML'}
+            </p>
+          </div>
+
+          <div>
+            <p className="text-xs uppercase tracking-wider text-ink-faint mb-1">Console de l'aperçu</p>
+            {!apercu ? (
+              <p className="text-sm text-ink-faint">
+                {data.entry ? "Ouvre l'aperçu du site pour capter ses messages et ses erreurs." : "Pas d'aperçu pour ce projet."}
+              </p>
+            ) : consoleApercu.length === 0 ? (
+              <p className="text-sm text-ink-faint">Aucun message : le site n'a signalé aucune erreur.</p>
+            ) : (
+              <ul className="font-mono text-xs space-y-1 max-h-60 overflow-auto">
+                {consoleApercu.map((m, i) => (
+                  <li
+                    key={i}
+                    className={m.niveau === 'error' ? 'text-danger' : m.niveau === 'warn' ? 'text-warning' : 'text-ink-soft'}
+                  >
+                    [{m.niveau}] {m.message}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
       )}
 

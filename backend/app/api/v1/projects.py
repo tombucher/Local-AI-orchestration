@@ -40,6 +40,7 @@ from app.services.project_analyzer import ProjectAnalyzer, TaskSuggestion, Analy
 from app.services.critical_path import CriticalPathService
 from app.services.maturity import MaturityService
 from app.services.project_export import build_zip, collect_project_files, entry_page, zip_filename
+from app.services.code_language import detect_language
 from app.services.project_folders import (
     MAX_TAILLE_FICHE, FicheModifiee, SansDossier, import_markdown_file, list_spaces, user_root,
     write_project_markdown,
@@ -1572,7 +1573,9 @@ async def get_project_files(
         "entry": entry_page(files),
         "code": [
             {"path": f.path, "task_id": f.task_id, "task_title": f.task_title,
-             "size": len(f.content), "content": f.content}
+             "size": len(f.content), "content": f.content,
+             # Pour le diagnostic : ce que contient vraiment le fichier
+             "language": detect_language(f.content)}
             for f in files.code
         ],
         "documents": [
