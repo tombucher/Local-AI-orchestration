@@ -38,10 +38,10 @@ class UnifiedProjectService {
   /**
    * Démarre un nouveau projet en mode dialogue
    */
-  async startProjectChat(): Promise<StartProjectChatResponse> {
+  async startProjectChat(space?: string | null): Promise<StartProjectChatResponse> {
     const token = localStorage.getItem(STORAGE_KEYS.TOKEN);
 
-    const response = await api.post('/projects/start-chat', {}, {
+    const response = await api.post('/projects/start-chat', space ? { space } : {}, {
       headers: {
         Authorization: `Bearer ${token}`
       }

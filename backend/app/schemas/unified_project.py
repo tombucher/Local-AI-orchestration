@@ -6,13 +6,19 @@ sans passer par le formulaire traditionnel.
 """
 from datetime import datetime
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class StartProjectChatRequest(BaseModel):
     """Requête pour démarrer un dialogue de création de projet"""
-    # Pas de champs requis - le dialogue commence vide
-    pass
+    # Espace de l'onglet d'où l'on crée le projet (Recherche, Mairie…), facultatif
+    space: Optional[str] = Field(None, max_length=120)
+
+    @field_validator('space')
+    @classmethod
+    def valider_espace(cls, v: Optional[str]) -> Optional[str]:
+        from app.schemas.project import _espace_valide
+        return _espace_valide(v)
 
 
 class StartProjectChatResponse(BaseModel):

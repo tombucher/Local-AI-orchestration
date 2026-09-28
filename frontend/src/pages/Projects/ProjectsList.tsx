@@ -1,7 +1,7 @@
 /**
  * Page Liste des projets
  * - Grid de cartes
- * - Filtres par type
+ * - Onglets par espace (dossiers du dossier de projets)
  * - Recherche
  * - Bouton créer projet
  */
@@ -16,31 +16,67 @@ import { Navbar } from '../../components/Layout/Navbar';
 import { Sidebar } from '../../components/Layout/Sidebar';
 import { ProjectCard } from '../../components/ProjectCard';
 import { EmptyState } from '../../components/EmptyState';
-import { ProjectStatus, ProjectType } from '../../types/project.types';
+import { ProjectStatus } from '../../types/project.types';
 import Loader from '../../components/ui/Loader';
 import MarkdownImport from '../../components/projects/MarkdownImport';
 
-const projectTypes: { value: ProjectType | 'all'; label: string }[] = [
-  { value: 'all', label: 'Tous' },
-  { value: ProjectType.PROFESSIONAL, label: 'Professionnel' },
-  { value: ProjectType.PERSONAL, label: 'Personnel' },
-  { value: ProjectType.RESEARCH, label: 'Recherche' },
-];
+// Onglets : « Tous », les espaces (dossiers du dossier de projets), « Sans espace »
+const TOUS = '__tous__';
+const SANS_ESPACE = '__sans__';
+const CLE_ONGLET = 'projets-espace';
+
+const lireOnglet = () => {
+  try {
+    return localStorage.getItem(CLE_ONGLET) || TOUS;
+  } catch {
+    return TOUS;
+  }
+};
 
 export const ProjectsList = () => {
   const navigate = useNavigate();
   const { projects, loading, fetchProjects } = useProjectsStore();
 
-  const [selectedType, setSelectedType] = useState<ProjectType | 'all'>('all');
+  const [onglet, setOnglet] = useState<string>(lireOnglet);
+  const [espaces, setEspaces] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
-    const filters: any = {};
-    if (selectedType !== 'all') filters.type = selectedType;
-    if (searchQuery) filters.search = searchQuery;
+    fetchProjects();
+  }, [fetchProjects]);
 
-    fetchProjects(filters);
-  }, [selectedType, searchQuery, fetchProjects]);
+  // Un dossier créé dans le Finder devient un espace : on relit la liste
+  // à chaque rechargement des projets
+  useEffect(() => {
+    projectFoldersApi.spaces().then((r) => setEspaces(r.spaces)).catch(() => {});
+  }, [projects]);
+
+  const choisirOnglet = (valeur: string) => {
+    setOnglet(valeur);
+    try {
+      localStorage.setItem(CLE_ONGLET, valeur);
+    } catch {
+      // préférence non mémorisée : sans conséquence
+    }
+  };
+
+  const tous = Array.isArray(projects) ? projects : [];
+  const aSansEspace = espaces.length > 0 && tous.some((p) => !p.space);
+  const ongletValide =
+    onglet === TOUS || (onglet === SANS_ESPACE ? aSansEspace : espaces.includes(onglet)) ? onglet : TOUS;
+  const dansOnglet = (p: (typeof tous)[number], o: string) =>
+    o === TOUS || (o === SANS_ESPACE ? !p.space : p.space === o);
+  const recherche = searchQuery.trim().toLowerCase();
+  const visibles = tous.filter(
+    (p) =>
+      dansOnglet(p, ongletValide) &&
+      (!recherche || `${p.name} ${p.description ?? ''}`.toLowerCase().includes(recherche)),
+  );
+  const onglets = [
+    { valeur: TOUS, libelle: 'Tous' },
+    ...espaces.map((e) => ({ valeur: e, libelle: e })),
+    ...(aSansEspace ? [{ valeur: SANS_ESPACE, libelle: 'Sans espace' }] : []),
+  ];
 
   const [ecriture, setEcriture] = useState(false);
   const sansFiche = (Array.isArray(projects) ? projects : []).filter(
@@ -66,7 +102,9 @@ export const ProjectsList = () => {
   };
 
   const handleCreateProject = () => {
-    navigate('/projects/new');
+    // Créé depuis un onglet d'espace : l'espace est prérempli
+    const espace = ongletValide !== TOUS && ongletValide !== SANS_ESPACE ? ongletValide : null;
+    navigate(espace ? `/projects/new?espace=${encodeURIComponent(espace)}` : '/projects/new');
   };
 
   const handleViewProject = (id: number) => {
@@ -125,22 +163,30 @@ export const ProjectsList = () => {
                 />
               </div>
 
-              {/* Filtres type */}
-              <div className="flex gap-2">
-                {projectTypes.map((type) => (
+            </div>
+
+            {/* Onglets d'espaces */}
+            <div className="mt-4 flex flex-wrap gap-x-1 gap-y-2 border-b border-ink-line" role="tablist">
+              {onglets.map(({ valeur, libelle }) => {
+                const actif = ongletValide === valeur;
+                const nombre = tous.filter((p) => dansOnglet(p, valeur)).length;
+                return (
                   <button
-                    key={type.value}
-                    onClick={() => setSelectedType(type.value)}
-                    className={`px-4 py-2 rounded-none font-medium text-sm transition-colors ${
-                      selectedType === type.value
-                        ? 'bg-primary text-white'
-                        : 'bg-paper-card text-ink-soft hover:bg-paper-warm border border-ink-line'
+                    key={valeur}
+                    role="tab"
+                    aria-selected={actif}
+                    onClick={() => choisirOnglet(valeur)}
+                    className={`px-4 py-2 -mb-px text-sm font-medium border-b-2 transition-colors ${
+                      actif
+                        ? 'border-accent text-ink'
+                        : 'border-transparent text-ink-soft hover:text-ink hover:border-ink-line'
                     }`}
                   >
-                    {type.label}
+                    {libelle}
+                    <span className="ml-1.5 text-xs text-ink-faint figures">{nombre}</span>
                   </button>
-                ))}
-              </div>
+                );
+              })}
             </div>
           </div>
 
@@ -152,10 +198,10 @@ export const ProjectsList = () => {
           )}
 
           {/* Empty State */}
-          {!loading && projects.length === 0 && (
+          {!loading && visibles.length === 0 && (
             <EmptyState
               icon={FolderKanban}
-              title={searchQuery ? 'Aucun projet trouvé' : 'Aucun projet'}
+              title={searchQuery ? 'Aucun projet trouvé' : ongletValide === TOUS ? 'Aucun projet' : 'Aucun projet dans cet espace'}
               description={
                 searchQuery
                   ? 'Essayez de modifier vos critères de recherche'
@@ -173,9 +219,9 @@ export const ProjectsList = () => {
           )}
 
           {/* Projects Grid */}
-          {!loading && projects.length > 0 && (
+          {!loading && visibles.length > 0 && (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {projects.map((project) => (
+              {visibles.map((project) => (
                 <ProjectCard key={project.id} project={project} onView={handleViewProject} />
               ))}
             </div>

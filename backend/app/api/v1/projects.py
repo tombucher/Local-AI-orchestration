@@ -41,7 +41,8 @@ from app.services.critical_path import CriticalPathService
 from app.services.maturity import MaturityService
 from app.services.project_export import build_zip, collect_project_files, entry_page, zip_filename
 from app.services.project_folders import (
-    MAX_TAILLE_FICHE, FicheModifiee, SansDossier, import_markdown_file, write_project_markdown,
+    MAX_TAILLE_FICHE, FicheModifiee, SansDossier, import_markdown_file, list_spaces, user_root,
+    write_project_markdown,
 )
 from app.models.veille_topic import VeilleTopic, VeilleScope
 
@@ -69,6 +70,23 @@ async def import_project_markdown(
         raise HTTPException(status_code=400, detail="Le fichier est vide.")
     projet = await import_markdown_file(db, current_user.id, file.filename, texte)
     return {"id": projet.id, "name": projet.name, "source_path": projet.source_path}
+
+
+@router.get("/spaces")
+async def list_project_spaces(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Les espaces (onglets de la page Projets) : les dossiers du dossier de
+    projets — même vides, pour qu'un dossier « Perso » tout juste créé
+    apparaisse — et ceux choisis à la main pour des projets sans fiche."""
+    racine = await user_root(db, current_user.id)
+    espaces = set(list_spaces(racine)) if racine else set()
+    espaces |= set((await db.execute(select(Project.space).where(
+        Project.user_id == current_user.id, Project.space.isnot(None),
+        Project.status != ProjectStatus.ARCHIVED,
+    ).distinct())).scalars().all())
+    return {"spaces": sorted(espaces, key=str.lower), "folder_configured": racine is not None}
 
 
 @router.post("/write-md-all")
@@ -191,6 +209,7 @@ async def create_project(
         name=project_in.name,
         description=project_in.description,
         type=project_in.type,
+        space=project_in.space,
         features=project_in.features.model_dump(),
         financial_config=project_in.financial_config.model_dump() if project_in.financial_config else None
     )
@@ -250,6 +269,12 @@ async def update_project(
     
     # Mettre à jour les champs fournis
     update_data = project_in.model_dump(exclude_unset=True)
+    # Projet tenu dans une fiche : son espace, c'est le dossier où elle se trouve
+    if project.source_path and 'space' in update_data and update_data['space'] != project.space:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ce projet est tenu dans un dossier : déplace son dossier dans le Finder pour changer d'espace.",
+        )
 
     # model_dump() convertit déjà tout en dict, pas besoin de reconvertir
     # Les champs features et financial_config sont déjà des dict après model_dump()
@@ -766,6 +791,7 @@ async def start_project_chat(
         name="Nouveau projet",  # Nom temporaire
         description=None,
         type="personal",  # Type par défaut, sera mis à jour
+        space=request.space,
         status=ProjectStatus.IDEATION,
         features={"code_gen": True, "veille": False, "git_auto": False}
     )

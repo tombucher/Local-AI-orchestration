@@ -45,7 +45,9 @@ const UnifiedProjectChat: React.FC = () => {
     setError(null);
 
     try {
-      const response = await unifiedProjectService.startProjectChat();
+      // Créé depuis un onglet d'espace de la page Projets
+      const espace = new URLSearchParams(window.location.search).get('espace');
+      const response = await unifiedProjectService.startProjectChat(espace);
       setProjectId(response.project_id);
       setIsChatStarted(true);
       console.log('Nouveau projet démarré avec ID:', response.project_id);

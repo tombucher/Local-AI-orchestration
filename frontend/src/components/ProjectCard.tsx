@@ -43,6 +43,9 @@ export const ProjectCard = ({ project, onView }: ProjectCardProps) => {
           <h3 className="font-display text-xl text-ink mb-2 leading-snug group-hover:text-accent transition-colors">{project.name}</h3>
           <div className="flex gap-2">
             <Badge label={getTypeLabel(project.type)} variant={project.type} />
+            {project.space && (
+              <span className="self-center text-xs uppercase tracking-wider text-ink-faint">{project.space}</span>
+            )}
           </div>
         </div>
       </div>

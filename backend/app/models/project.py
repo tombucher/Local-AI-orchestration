@@ -52,6 +52,9 @@ class Project(Base):
     # de projets de l'utilisateur) et empreinte de la dernière version importée
     source_path = Column(String(1000), nullable=True, index=True)
     source_hash = Column(String(64), nullable=True)
+    # Espace (Recherche, Pro, Mairie…) : le dossier qui contient le dossier du
+    # projet ; choisi à la main pour un projet sans fiche. None = sans espace.
+    space = Column(String(120), nullable=True, index=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

@@ -4,7 +4,7 @@
  * - Configuration financière conditionnelle
  */
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -15,11 +15,13 @@ import { Sidebar } from '../../components/Layout/Sidebar';
 import { ProjectType } from '../../types/project.types';
 import toast from 'react-hot-toast';
 import Loader from '../../components/ui/Loader';
+import { projectFoldersApi } from '../../services/projectFoldersApi';
 
 // Schéma de validation Zod
 const projectSchema = z.object({
   name: z.string().min(3, 'Minimum 3 caractères'),
   description: z.string().optional(),
+  space: z.string().max(120).optional(),
   type: z.enum(['professional', 'personal', 'research']),
   features: z.object({
     code_gen: z.boolean(),
@@ -63,6 +65,7 @@ export const ProjectForm = () => {
     defaultValues: {
       name: '',
       description: '',
+      space: new URLSearchParams(window.location.search).get('espace') ?? '',
       type: 'personal',
       features: {
         code_gen: true,
@@ -74,6 +77,12 @@ export const ProjectForm = () => {
       },
     },
   });
+
+  // Espaces existants, proposés à la saisie
+  const [espaces, setEspaces] = useState<string[]>([]);
+  useEffect(() => {
+    projectFoldersApi.spaces().then((r) => setEspaces(r.spaces)).catch(() => {});
+  }, []);
 
   const projectType = watch('type');
   const isProfessional = projectType === 'professional';
@@ -90,6 +99,7 @@ export const ProjectForm = () => {
     if (isEditMode && currentProject) {
       setValue('name', currentProject.name);
       setValue('description', currentProject.description || '');
+      setValue('space', currentProject.space || '');
       setValue('type', currentProject.type);
       if (currentProject.features) {
         setValue('features', currentProject.features);
@@ -109,6 +119,7 @@ export const ProjectForm = () => {
       const cleanData = {
         ...data,
         type: data.type as ProjectType,
+        space: data.space?.trim() || null,
         financial_config: isProfessional ? data.financial_config : undefined,
       };
 
@@ -190,6 +201,28 @@ export const ProjectForm = () => {
                       className="w-full px-3 py-2 border border-ink-line rounded-none focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
                       placeholder="Décrivez votre projet..."
                     />
+                  </div>
+
+                  {/* Espace */}
+                  <div>
+                    <label className="block text-sm font-medium text-ink-soft mb-1">Espace</label>
+                    <input
+                      {...register('space')}
+                      list="espaces-existants"
+                      disabled={!!(isEditMode && currentProject?.source_path)}
+                      className="w-full px-3 py-2 border border-ink-line rounded-none focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent disabled:bg-paper-warm disabled:text-ink-faint"
+                      placeholder="Recherche, Pro, Mairie… (ou un nouvel espace)"
+                    />
+                    <datalist id="espaces-existants">
+                      {espaces.map((e) => (
+                        <option key={e} value={e} />
+                      ))}
+                    </datalist>
+                    <p className="mt-1 text-xs text-ink-faint">
+                      {isEditMode && currentProject?.source_path
+                        ? "Ce projet est tenu dans un dossier : pour changer d'espace, déplace son dossier dans le Finder."
+                        : "L'onglet de la page Projets, et le dossier où « Écrire la fiche » rangera ce projet."}
+                    </p>
                   </div>
 
                   {/* Type */}

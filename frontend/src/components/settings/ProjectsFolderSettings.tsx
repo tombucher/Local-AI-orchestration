@@ -232,6 +232,7 @@ export const ProjectsFolderSettings = () => {
                     <ul className="text-sm text-ink-soft space-y-0.5">
                       {etat.projects.map((p) => (
                         <li key={p.path} className="truncate">
+                          {p.space && <span className="text-ink-faint">{p.space} / </span>}
                           <span className="text-ink">{p.folder}</span>
                           <span className="text-ink-faint"> / {p.file}</span>
                         </li>

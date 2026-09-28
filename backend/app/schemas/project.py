@@ -31,12 +31,31 @@ class FinancialConfig(BaseModel):
         return v
 
 
+def _espace_valide(v: Optional[str]) -> Optional[str]:
+    """Un espace est un nom de dossier : ni séparateur, ni nom caché."""
+    if v is None:
+        return None
+    v = v.strip()
+    if not v:
+        return None
+    if any(c in v for c in '/\\:') or v.startswith('.'):
+        raise ValueError("Nom d'espace invalide (pas de / \\ : ni de point initial)")
+    return v
+
+
 class ProjectBase(BaseModel):
     """Champs communs Project"""
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = None
     type: ProjectType
     features: ProjectFeatures = Field(default_factory=ProjectFeatures)
+    # Espace (Recherche, Pro, Mairie…) — onglet de la page Projets
+    space: Optional[str] = Field(None, max_length=120)
+
+    @field_validator('space')
+    @classmethod
+    def valider_espace(cls, v: Optional[str]) -> Optional[str]:
+        return _espace_valide(v)
 
 
 class ProjectCreate(ProjectBase):
@@ -62,6 +81,12 @@ class ProjectUpdate(BaseModel):
     status: Optional[ProjectStatus] = None
     features: Optional[ProjectFeatures] = None
     financial_config: Optional[FinancialConfig] = None
+    space: Optional[str] = Field(None, max_length=120)
+
+    @field_validator('space')
+    @classmethod
+    def valider_espace(cls, v: Optional[str]) -> Optional[str]:
+        return _espace_valide(v)
 
 
 class ProjectResponse(ProjectBase):

@@ -28,7 +28,7 @@ import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import delete, insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -105,16 +105,41 @@ def pick_project_file(dossier: Path) -> Optional[Path]:
     return fiches[0]
 
 
-def scan(racine: Path) -> List[Path]:
-    """Fiches des projets d'un dossier de projets (un sous-dossier = un projet)."""
+def _sous_dossiers(dossier: Path) -> List[Path]:
+    try:
+        return sorted((p for p in dossier.iterdir() if p.is_dir() and _visible(p)),
+                      key=lambda p: p.name.lower())
+    except OSError:
+        return []
+
+
+def scan(racine: Path) -> List[Tuple[Path, Optional[str]]]:
+    """Fiches des projets d'un dossier de projets, avec leur espace.
+
+    Premier niveau : un dossier qui contient une fiche est un projet (sans
+    espace) ; sinon c'est un espace, et ses sous-dossiers sont ses projets.
+    Créer un dossier « Perso » suffit donc à créer l'espace Perso.
+    """
     if not racine.is_dir():
         return []
-    fiches = []
-    for dossier in sorted(p for p in racine.iterdir() if p.is_dir() and _visible(p)):
+    fiches: List[Tuple[Path, Optional[str]]] = []
+    for dossier in _sous_dossiers(racine):
         fiche = pick_project_file(dossier)
         if fiche:
-            fiches.append(fiche)
+            fiches.append((fiche, None))
+            continue
+        for sous in _sous_dossiers(dossier):
+            fiche = pick_project_file(sous)
+            if fiche:
+                fiches.append((fiche, dossier.name))
     return fiches
+
+
+def list_spaces(racine: Path) -> List[str]:
+    """Les espaces : dossiers du premier niveau qui ne sont pas des projets (même vides)."""
+    if not racine.is_dir():
+        return []
+    return [d.name for d in _sous_dossiers(racine) if pick_project_file(d) is None]
 
 
 def browse(rel: str = "") -> dict:
@@ -149,6 +174,13 @@ def browse(rel: str = "") -> dict:
             "breadcrumb": etapes, "dirs": enfants, "files": fichiers}
 
 
+def _existe(rel: str) -> bool:
+    try:
+        return inside_mount(rel).exists()
+    except ValueError:
+        return False
+
+
 def _empreinte(texte: str) -> str:
     return hashlib.sha256(texte.encode("utf-8")).hexdigest()
 
@@ -176,6 +208,7 @@ class SyncReport:
     checked: List[str] = field(default_factory=list)       # cases cochées dans les fiches
     exported: List[str] = field(default_factory=list)      # fichiers écrits dans Production/
     kept: List[str] = field(default_factory=list)          # retouchés à la main, non écrasés
+    moved: List[str] = field(default_factory=list)         # dossiers déplacés/renommés, retrouvés
     warnings: List[str] = field(default_factory=list)
 
     def as_dict(self) -> dict:
@@ -393,19 +426,37 @@ async def sync_user(db: AsyncSession, user_id: int) -> SyncReport:
     if racine is None:
         return report
 
-    for fiche in scan(racine):
+    fiches = scan(racine)
+    # Projets dont la fiche a disparu de son chemin : déplacés ou renommés dans
+    # le Finder (changement d'espace…). On les retrouve plutôt que d'en créer un double.
+    presentes = {relative(f) for f, _ in fiches}
+    orphelins = [p for p in (await db.execute(select(Project).where(
+        Project.user_id == user_id, Project.source_path.isnot(None)))).scalars().all()
+        if p.source_path not in presentes and not _existe(p.source_path)]
+
+    for fiche, espace in fiches:
         rel = relative(fiche)
         try:
             if fiche.stat().st_size > MAX_TAILLE_FICHE:
                 report.warnings.append(f"{rel} : fiche trop volumineuse, ignorée.")
                 continue
             texte = fiche.read_text(encoding="utf-8", errors="replace")
+            empreinte = _empreinte(texte)
             projet = (await db.execute(select(Project).where(
                 Project.user_id == user_id, Project.source_path == rel))).scalars().first()
-            if projet is None or projet.source_hash != _empreinte(texte):
+            if projet is None:
+                projet = next((p for p in orphelins if p.source_hash == empreinte), None) or next(
+                    (p for p in orphelins if Path(p.source_path).parent.name == fiche.parent.name), None)
+                if projet is not None:
+                    orphelins.remove(projet)
+                    report.moved.append(f"{projet.name} → {rel}")
+                    projet.source_path = rel
+            if projet is None or projet.source_hash != empreinte:
                 projet = await apply_markdown(db, user_id, texte, project=projet,
                                               fallback_name=fiche.parent.name,
                                               source_path=rel, report=report)
+            if projet.space != espace:
+                projet.space = espace
             await _cocher_les_terminees(db, projet, fiche, report)
             await _exporter(db, projet, fiche.parent, report)
             await db.commit()
@@ -515,9 +566,10 @@ async def write_project_markdown(db: AsyncSession, user_id: int, project: Projec
     creation = not project.source_path
     if creation:
         base = _nom_de_dossier(project.name)
-        dossier, n = racine / base, 2
+        parent = racine / _nom_de_dossier(project.space) if project.space else racine
+        dossier, n = parent / base, 2
         while dossier.exists():  # ne jamais écrire dans un dossier existant
-            dossier, n = racine / f"{base} {n}", n + 1
+            dossier, n = parent / f"{base} {n}", n + 1
         fiche = dossier / f"{base}.md"
     else:
         fiche = inside_mount(project.source_path)

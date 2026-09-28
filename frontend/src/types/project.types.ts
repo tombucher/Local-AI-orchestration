@@ -39,6 +39,7 @@ export interface Project {
   financial_config: FinancialConfig | null;
   maturity_score: number;  // Score de maturité (0-100)
   source_path?: string | null;  // fiche .md d'origine (dossier de projets)
+  space?: string | null;  // espace (Recherche, Pro, Mairie…) = dossier parent de la fiche
   repository_url?: string | null;
   created_at: string;
   updated_at: string;
@@ -66,6 +67,7 @@ export interface ProjectCreate {
   type: ProjectType;
   features: ProjectFeatures;
   financial_config?: FinancialConfig;
+  space?: string | null;
 }
 
 export interface ProjectUpdate {
@@ -75,6 +77,7 @@ export interface ProjectUpdate {
   status?: ProjectStatus;
   features?: ProjectFeatures;
   financial_config?: FinancialConfig;
+  space?: string | null;
 }
 
 export interface ProjectStats {

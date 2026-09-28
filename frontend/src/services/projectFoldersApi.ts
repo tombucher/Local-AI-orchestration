@@ -40,7 +40,8 @@ export interface ProjectsFolderState {
   root_display: string;
   path: string | null;
   display: string | null;
-  projects: { folder: string; file: string; path: string }[];
+  projects: { folder: string; file: string; path: string; space: string | null }[];
+  spaces?: string[];
   report?: SyncReport | null;
 }
 
@@ -68,6 +69,9 @@ export const projectFoldersApi = {
 
   writeAll: async (): Promise<{ written: (WriteResult & { id: number; name: string })[] }> =>
     (await api.post('/projects/write-md-all')).data,
+
+  spaces: async (): Promise<{ spaces: string[]; folder_configured: boolean }> =>
+    (await api.get('/projects/spaces', { silentError: true })).data,
 
   importMarkdown: async (file: File): Promise<{ id: number; name: string; source_path: string | null }> => {
     const form = new FormData();

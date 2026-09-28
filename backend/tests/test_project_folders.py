@@ -384,3 +384,73 @@ async def test_ecrire_toutes_les_fiches(client, auth_headers, db_session, moi, m
     # Une seconde fois : plus rien à écrire
     r = await client.post("/api/v1/projects/write-md-all", headers=auth_headers)
     assert r.json()["written"] == []
+
+
+# --------------------------------------------------------------- espaces --
+
+@pytest.mark.asyncio
+async def test_espaces_suivent_les_dossiers(client, auth_headers, db_session, moi, mac):
+    _ecrire(mac, "Recherche/Data-compost", "data-compost.md", "# Data-compost\n")
+    _ecrire(mac, "Mairie/Site de la mairie", "site.md", "# Site de la mairie\n")
+    _ecrire(mac, "Projet à la racine", "fiche.md", "# Sans espace\n")
+    (mac / "Projets" / "Perso").mkdir()  # espace tout juste créé, encore vide
+
+    await pf.sync_user(db_session, moi)
+    espaces = {p.name: p.space for p in (await db_session.execute(select(Project))).scalars()}
+    assert espaces == {"Data-compost": "Recherche", "Site de la mairie": "Mairie", "Sans espace": None}
+
+    r = await client.get("/api/v1/projects/spaces", headers=auth_headers)
+    assert r.json()["spaces"] == ["Mairie", "Perso", "Recherche"]
+
+
+@pytest.mark.asyncio
+async def test_dossier_deplace_d_un_espace_a_l_autre_sans_doublon(db_session, moi, mac):
+    fiche = _ecrire(mac, "Recherche/Data-compost", "data-compost.md", "# Data-compost\n\n## Tâche\n")
+    await pf.sync_user(db_session, moi)
+    (mac / "Projets" / "Perso").mkdir()
+    fiche.parent.rename(mac / "Projets" / "Perso" / "Data-compost")
+
+    rapport = await pf.sync_user(db_session, moi)
+    assert rapport.created == [] and len(rapport.moved) == 1
+    projets = (await db_session.execute(select(Project))).scalars().all()
+    assert len(projets) == 1
+    assert projets[0].space == "Perso"
+    assert projets[0].source_path == "Projets/Perso/Data-compost/data-compost.md"
+
+
+@pytest.mark.asyncio
+async def test_fiche_ecrite_dans_l_espace_du_projet(client, auth_headers, db_session, moi, mac):
+    pid = (await client.post("/api/v1/projects/", json={
+        "name": "Bulletin Par Cheux Nous", "type": "personal", "space": "Mairie",
+        "features": {"code_gen": True},
+    }, headers=auth_headers)).json()["id"]
+    r = await client.post(f"/api/v1/projects/{pid}/write-md", headers=auth_headers)
+    assert r.json()["path"] == "Projets/Mairie/Bulletin Par Cheux Nous/Bulletin Par Cheux Nous.md"
+
+    # Tenu dans un dossier : l'espace se change dans le Finder, pas dans l'outil
+    r = await client.put(f"/api/v1/projects/{pid}", json={"space": "Pro"}, headers=auth_headers)
+    assert r.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_espace_invalide_refuse(client, auth_headers, mac):
+    r = await client.post("/api/v1/projects/", json={
+        "name": "X", "type": "personal", "space": "../etc", "features": {"code_gen": True},
+    }, headers=auth_headers)
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_creation_par_dialogue_dans_un_espace(client, auth_headers, db_session, monkeypatch):
+    """« Nouveau projet » ouvre le dialogue avec l'IA : il doit garder l'onglet d'origine."""
+    from app.services import ideation_service
+
+    async def sans_modele(self, *a, **k):
+        return {"message": "Bonjour", "conversation_id": 1}
+    for nom in dir(ideation_service.IdeationService):
+        if nom.startswith("start"):
+            monkeypatch.setattr(ideation_service.IdeationService, nom, sans_modele)
+
+    r = await client.post("/api/v1/projects/start-chat", json={"space": "Mairie"}, headers=auth_headers)
+    projet = (await db_session.execute(select(Project))).scalars().first()
+    assert projet is not None and projet.space == "Mairie", r.text

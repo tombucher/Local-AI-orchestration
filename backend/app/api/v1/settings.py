@@ -312,14 +312,17 @@ def _folder_state(folder: Optional[str]) -> dict:
         "path": folder,
         "display": project_folders.display_path(folder) if folder else None,
         "projects": [],
+        "spaces": [],
     }
     if folder and etat["available"]:
         try:
             racine = project_folders.inside_mount(folder)
             etat["projects"] = [
-                {"folder": f.parent.name, "file": f.name, "path": project_folders.relative(f)}
-                for f in project_folders.scan(racine)
+                {"folder": f.parent.name, "file": f.name, "space": espace,
+                 "path": project_folders.relative(f)}
+                for f, espace in project_folders.scan(racine)
             ]
+            etat["spaces"] = project_folders.list_spaces(racine)
         except ValueError:
             pass
     return etat
