@@ -289,6 +289,8 @@ class UnifiedOrchestrator:
             task.completed_at = datetime.utcnow()
             next_status = "COMPLETED"
 
+        await self._start_veille_recurrence(task)
+
         await self._log_event(
             task_id=task.id,
             event_type=TaskEventType.CODE_GENERATED,
@@ -301,6 +303,23 @@ class UnifiedOrchestrator:
         # État terminal atteint : plus rien à afficher côté avancement
         clear_progress(task.id)
         logger.info(f"✅ Task {task.id} ({task.task_type.value}) → {next_status}")
+
+    async def _start_veille_recurrence(self, task: Task) -> None:
+        """Une veille récurrente démarre son rythme après sa première exécution.
+
+        Les veilles proposées par l'analyse ou écrites dans une fiche naissent
+        en attente, sans date de passage : c'est l'utilisateur qui lance la
+        première, et la récurrence suit.
+        """
+        if not task.veille_topic_id:
+            return
+        topic = (await self.db.execute(
+            select(VeilleTopic).where(VeilleTopic.id == task.veille_topic_id))).scalar_one_or_none()
+        if topic is None:
+            return
+        topic.last_scan = datetime.now(timezone.utc)
+        if topic.next_scan is None and (topic.scan_frequency or 'once') not in ('once', 'manual'):
+            topic.next_scan = topic.calculate_next_scan()
 
     async def _handle_code_generation(self, task: Task) -> None:
         """Gère la génération de code, en partageant le contexte des autres tâches du projet"""

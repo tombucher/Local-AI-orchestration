@@ -100,6 +100,18 @@ export const ProjectAnalysisPage = () => {
       });
 
       toast.success(response.data.message);
+      // Projet tenu dans une fiche .md : les nouvelles tâches n'y sont pas encore
+      api
+        .get(`/projects/${projectId}`, { silentError: true })
+        .then(({ data }) => {
+          if (data?.source_path) {
+            toast('Pour les voir dans ta fiche .md : « Mettre à jour la fiche » sur la page du projet.', {
+              icon: '📝',
+              duration: 8000,
+            });
+          }
+        })
+        .catch(() => {});
       navigate(`/projects/${projectId}`);
     } catch (error) {
       console.error('Error creating tasks:', error);

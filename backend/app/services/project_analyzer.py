@@ -149,23 +149,35 @@ class ProjectAnalyzer:
             "num_predict": 4096,
         }
 
-    def _summarize_ideation_transcript(self, transcript: list, max_chars: int = 2000) -> str:
-        """Résume le transcript d'idéation pour inclusion dans le prompt de génération."""
+    def _summarize_ideation_transcript(self, transcript: list, max_chars: int = 6000) -> str:
+        """Discussion d'idéation à inclure dans le prompt de génération des tâches.
+
+        On garde la FIN de la discussion — c'est là que se trouvent les
+        conclusions — et on écarte le message d'introduction automatique (la
+        description du projet est déjà transmise à part). Tronquer le début
+        plutôt que la fin : l'ancienne version coupait justement les conclusions.
+        """
         relevant = [
             msg for msg in transcript
             if msg.get("role") in ("USER", "ASSISTANT")
+            and not (msg.get("meta") or {}).get("auto_generated")
         ]
         lines = []
         for msg in relevant:
             role = "Utilisateur" if msg["role"] == "USER" else "Assistant"
             content = msg.get("content", "")
-            if len(content) > 300:
-                content = content[:300] + "..."
+            if len(content) > 800:
+                content = content[:800] + "..."
             lines.append(f"{role}: {content}")
-        summary = "\n".join(lines)
-        if len(summary) > max_chars:
-            summary = summary[:max_chars] + "\n[... conversation tronquée ...]"
-        return summary
+
+        garde, total = [], 0
+        for line in reversed(lines):
+            if total + len(line) > max_chars and garde:
+                garde.append("[... début de la conversation omis ...]")
+                break
+            garde.append(line)
+            total += len(line) + 1
+        return "\n".join(reversed(garde))
 
     def _build_system_prompt(self) -> str:
         """Retourne le system prompt adapté au modèle."""
@@ -649,7 +661,9 @@ RÈGLES POUR LES VEILLES AUTOMATIQUES:
                 description=full_description,
                 task_type=suggestion.task_type,
                 priority=suggestion.priority,
-                status=TaskStatus.READY,
+                # En attente : c'est l'utilisateur qui active ses tâches (sinon le
+                # planificateur lançait aussitôt veilles et recherches)
+                status=TaskStatus.CREATED,
                 llm_prompt=suggestion.llm_prompt,
                 estimated_duration=suggestion.estimated_duration,
                 metadata=metadata,

@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.models.project import Project, ProjectStatus
+from app.models.task import Task, TaskStatus
 from app.models.ideation_message import IdeationMessage, MessageRole
 from app.prompts.ideation_prompts import (
     get_socratic_system_prompt,
@@ -137,25 +138,58 @@ class IdeationService:
         if not project:
             raise ValueError(f"Project {project_id} not found")
 
-        if project.status != ProjectStatus.IDEATION:
-            raise ValueError(
-                f"Project {project_id} must be in IDEATION status to start ideation. "
-                f"Current status: {project.status}"
-            )
+        if project.status == ProjectStatus.ARCHIVED:
+            raise ValueError(f"Project {project_id} is archived")
+
+        # Projet déjà en cours (fiche, tâches) : on discute de ce qui manque,
+        # pas d'une idée de départ
+        en_cours = project.status != ProjectStatus.IDEATION
+        taches = []
+        if en_cours:
+            taches = (await self.db.execute(
+                select(Task).where(Task.project_id == project_id,
+                                   Task.status != TaskStatus.CANCELLED).order_by(Task.id)
+            )).unique().scalars().all()
 
         # Créer le message de bienvenue système
         welcome_msg = IdeationMessage(
             project_id=project_id,
             role=MessageRole.SYSTEM,
-            content=get_welcome_message(),
-            meta={"type": "welcome"}
+            content=(
+                f"Discutons de « {project.name} » : ce qui avance, ce qui bloque, ce qui manque. "
+                "Quand la discussion te semble mûre, clique sur « Proposer des tâches » : "
+                "l'IA en tirera des tâches, que tu choisiras une à une."
+            ) if en_cours else get_welcome_message(),
+            meta={"type": "welcome", "existing_project": en_cours}
         )
         self.db.add(welcome_msg)
 
         # Créer un message utilisateur "fantôme" avec le contexte du projet
         # Si le projet n'a pas encore de nom/description (mode dialogue unifié),
         # on crée un message vide qui sera rempli par l'utilisateur
-        if project.name and project.name != "Nouveau projet":
+        if en_cours:
+            description = (project.description or "").strip()
+            if len(description) > 2500:
+                description = description[:2500] + " […]"
+            lignes = [f"Le projet « {project.name} » est en cours."]
+            if description:
+                lignes += ["", "Description :", description]
+            if taches:
+                lignes += ["", "Tâches déjà prévues :"] + [
+                    f"- {'[fait] ' if t.status == TaskStatus.COMPLETED else ''}{t.title}" for t in taches[:40]
+                ]
+            else:
+                lignes += ["", "Il n'a encore aucune tâche."]
+            lignes += ["", "Aide-moi à voir ce qui manque, à préciser les prochaines étapes et à "
+                           "trouver les tâches à ajouter. Pose-moi tes questions une par une."]
+            context_msg = IdeationMessage(
+                project_id=project_id,
+                role=MessageRole.USER,
+                content="\n".join(lignes),
+                meta={"type": "initial_context", "auto_generated": True, "existing_project": True}
+            )
+            self.db.add(context_msg)
+        elif project.name and project.name != "Nouveau projet":
             project_context = f"Je souhaite lancer le projet '{project.name}'"
             if project.description:
                 project_context += f" avec la description suivante : {project.description}"
@@ -573,6 +607,25 @@ Analyse cette conversation et extrais les informations clés du projet au format
 
         content_lower = message_content.lower()
         return any(variation in content_lower for variation in variations)
+
+    async def save_transcript(self, project_id: int) -> int:
+        """Garde la discussion pour l'analyse, sans changer le statut du projet.
+
+        Pour un projet en cours : « Proposer des tâches » passe la discussion à
+        l'analyse, qui en tire des tâches à valider. Renvoie le nombre de messages.
+        """
+        project = (await self.db.execute(
+            select(Project).where(Project.id == project_id))).scalar_one_or_none()
+        if not project:
+            raise ValueError(f"Project {project_id} not found")
+        history = await self.get_conversation_history(project_id)
+        project.ideation_transcript = [
+            {"role": msg.role.value, "content": msg.content,
+             "created_at": msg.created_at.isoformat(), "meta": msg.meta}
+            for msg in history
+        ]
+        await self.db.commit()
+        return len(history)
 
     async def complete_ideation(self, project_id: int) -> Project:
         """

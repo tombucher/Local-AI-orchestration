@@ -14,6 +14,7 @@ from app.core.database import get_db
 from app.core.exceptions import EntityNotFoundError, ValidationError, ConflictError
 from app.api.deps import get_current_user
 from app.models import User, Project, Task, TimeEntry, ProjectStatus, TaskStatus
+from app.models.task import TaskType
 from app.schemas import (
     ProjectCreate, ProjectUpdate, ProjectResponse, ProjectStats, ProjectList
 )
@@ -576,7 +577,9 @@ async def create_suggested_tasks(
         existing_topic = existing_result.scalars().first()
 
         if not existing_topic:
-            # Créer le nouveau topic, planifié immédiatement pour le 1er scan
+            # Pas de passage programmé : la veille naît en tâche en attente, que
+            # l'utilisateur lance ; sa récurrence démarre après ce premier passage
+            # (auparavant le planificateur la lançait dans le quart d'heure).
             new_topic = VeilleTopic(
                 project_id=project_id,
                 name=f"Veille {veille_suggestion.scope}",
@@ -585,9 +588,20 @@ async def create_suggested_tasks(
                 keywords=veille_suggestion.keywords,
                 scan_frequency=veille_suggestion.scan_frequency,
                 enabled=True,
-                next_scan=datetime.now(timezone.utc),
             )
             db.add(new_topic)
+            await db.flush()
+            db.add(Task(
+                project_id=project_id,
+                title=f"Veille — {', '.join(veille_suggestion.keywords[:3]) or veille_suggestion.scope}"[:255],
+                description=veille_suggestion.reason,
+                task_type=TaskType.VEILLE,
+                status=TaskStatus.CREATED,
+                veille_topic_id=new_topic.id,
+                task_metadata={"scope": veille_suggestion.scope,
+                               "keywords": veille_suggestion.keywords,
+                               "frequency": veille_suggestion.scan_frequency},
+            ))
             created_veille_count += 1
 
     await db.commit()

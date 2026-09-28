@@ -108,6 +108,15 @@ export const ideationService = {
   },
 
   /**
+   * Garde la discussion d'un projet en cours pour l'analyse (« Proposer des
+   * tâches »), sans changer le statut du projet
+   */
+  saveTranscript: async (projectId: number): Promise<{ project_id: number; messages: number }> => {
+    const response = await api.post(`/ideation/transcript/${projectId}`);
+    return response.data;
+  },
+
+  /**
    * Finalise la phase d'idéation et passe le projet en statut PLANNING
    */
   completeIdeation: async (projectId: number): Promise<IdeationCompleteResponse> => {

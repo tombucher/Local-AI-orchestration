@@ -21,6 +21,7 @@ import { ProjectHealthDashboard } from '../../components/projects/ProjectHealthD
 import { ProjectTasksBoard } from '../../components/projects/ProjectTasksBoard';
 import ProjectDocuments from '../../components/projects/ProjectDocuments';
 import ProjectOutputs from '../../components/projects/ProjectOutputs';
+import ProjectDiscussion from '../../components/projects/ProjectDiscussion';
 import ConfirmDialog from '../../components/ui/ConfirmDialog';
 import Loader from '../../components/ui/Loader';
 import { tasksService } from '../../services/tasks';
@@ -194,6 +195,14 @@ export const ProjectDetail = () => {
       ) : (
         <>
           <ProjectFeaturesPanel project={project} />
+          {/* key : une discussion par projet (sinon l'état survit au changement de projet) */}
+          {currentProjectStats && (
+            <ProjectDiscussion
+              key={project.id}
+              projectId={project.id}
+              sansTaches={currentProjectStats.total_tasks === 0}
+            />
+          )}
           <ProjectOutputs projectId={project.id} />
           <ProjectDocuments projectId={project.id} />
           <ProjectHealthDashboard

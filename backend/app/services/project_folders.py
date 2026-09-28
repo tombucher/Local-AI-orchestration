@@ -332,8 +332,8 @@ async def _lier_veille(db: AsyncSession, project_id: int, tache: Task, metadata:
     topic = VeilleTopic(project_id=project_id, name=tache.title, scope=scope,
                         description=tache.description, keywords=metadata.get("keywords", []),
                         excluded_keywords=[], scan_frequency=frequence, enabled=True)
-    if frequence != "once":
-        topic.next_scan = topic.calculate_next_scan()
+    # Pas de date de passage : la récurrence démarre après la première
+    # exécution, que l'utilisateur lance lui-même
     db.add(topic)
     await db.flush()
     tache.veille_topic_id = topic.id

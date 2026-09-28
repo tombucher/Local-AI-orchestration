@@ -60,10 +60,12 @@ async def start_ideation(
             detail=f"Project {request.project_id} not found"
         )
 
-    if project.status != ProjectStatus.IDEATION:
+    # Discussion possible sur tout projet non archivé : pour un projet en cours,
+    # elle sert à trouver les tâches qui manquent
+    if project.status == ProjectStatus.ARCHIVED:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Project must be in IDEATION status. Current status: {project.status}"
+            detail="Ce projet est archivé : désarchive-le pour en discuter."
         )
 
     # Démarrer l'idéation (génère automatiquement la première réponse de l'IA)
@@ -170,10 +172,12 @@ async def send_message(
             detail=f"Project {project_id} not found"
         )
 
-    if project.status != ProjectStatus.IDEATION:
+    # Discussion possible sur tout projet non archivé : pour un projet en cours,
+    # elle sert à trouver les tâches qui manquent
+    if project.status == ProjectStatus.ARCHIVED:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Project must be in IDEATION status. Current status: {project.status}"
+            detail="Ce projet est archivé : désarchive-le pour en discuter."
         )
 
     # Envoyer le message et générer la réponse
@@ -230,10 +234,12 @@ async def send_message_stream(
             detail=f"Project {project_id} not found"
         )
 
-    if project.status != ProjectStatus.IDEATION:
+    # Discussion possible sur tout projet non archivé : pour un projet en cours,
+    # elle sert à trouver les tâches qui manquent
+    if project.status == ProjectStatus.ARCHIVED:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Project must be in IDEATION status. Current status: {project.status}"
+            detail="Ce projet est archivé : désarchive-le pour en discuter."
         )
 
     # Envoyer le message utilisateur (non-async ici, juste sauvegarder)
@@ -258,6 +264,22 @@ async def send_message_stream(
             "Connection": "keep-alive",
         }
     )
+
+
+@router.post("/transcript/{project_id}")
+async def save_ideation_transcript(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Garde la discussion pour l'analyse (« Proposer des tâches »), sans
+    changer le statut du projet."""
+    project = (await db.execute(select(Project).where(
+        Project.id == project_id, Project.user_id == current_user.id))).scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Projet introuvable")
+    messages = await IdeationService(db, user_id=current_user.id).save_transcript(project_id)
+    return {"project_id": project_id, "messages": messages}
 
 
 @router.post("/complete/{project_id}", response_model=IdeationCompleteResponse)
