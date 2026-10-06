@@ -49,6 +49,12 @@ export interface Project {
   // Statistiques renvoyées par la liste de projets
   tasks_total?: number | null;
   tasks_completed?: number | null;
+  // Résumé sur une ligne (liste des projets)
+  tasks_to_activate?: number | null;
+  tasks_to_review?: number | null;
+  tasks_running?: number | null;
+  tasks_failed?: number | null;
+  next_due_date?: string | null;
 }
 
 export interface ProjectStats {

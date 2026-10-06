@@ -8,7 +8,7 @@
 
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronDown, ChevronRight, FolderDown, Plus, Search, FolderKanban } from 'lucide-react';
+import { ChevronDown, ChevronRight, FolderDown, LayoutGrid, List, Plus, Search, FolderKanban } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { projectFoldersApi } from '../../services/projectFoldersApi';
 import { useProjectsStore } from '../../stores/projectsStore';
@@ -21,6 +21,7 @@ import { projectsService } from '../../services/projects';
 import { etatDe } from '../../utils/projectState';
 import Loader from '../../components/ui/Loader';
 import MarkdownImport from '../../components/projects/MarkdownImport';
+import ProjectRow from '../../components/projects/ProjectRow';
 
 // Onglets : « Tous », les espaces (dossiers du dossier de projets), « Sans espace »
 const TOUS = '__tous__';
@@ -126,6 +127,72 @@ export const ProjectsList = () => {
     }
   };
 
+  // --- Vue : liste compacte (par défaut) ou cartes -------------------------
+  const [vue, setVue] = useState<'liste' | 'cartes'>(() => {
+    try {
+      return localStorage.getItem('projets-vue') === 'cartes' ? 'cartes' : 'liste';
+    } catch {
+      return 'liste';
+    }
+  });
+  const choisirVue = (v: 'liste' | 'cartes') => {
+    setVue(v);
+    try {
+      localStorage.setItem('projets-vue', v);
+    } catch {
+      // préférence non mémorisée : sans conséquence
+    }
+  };
+
+  /** Gestionnaires du glisser-déposer d'un projet actif */
+  const glisserDeposer = (id: number) => ({
+    draggable: true,
+    onDragStart: (e: React.DragEvent) => {
+      setGlisse(id);
+      e.dataTransfer.effectAllowed = 'move';
+    },
+    onDragOver: (e: React.DragEvent) => {
+      if (glisse !== null) e.preventDefault();
+    },
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault();
+      deposerSur(id);
+    },
+    onDragEnd: () => setGlisse(null),
+    className: `transition-opacity ${glisse === id ? 'opacity-40' : ''} ${
+      glisse !== null && glisse !== id ? 'outline-dashed outline-1 outline-ink-line' : ''
+    }`,
+  });
+
+  /** Une série de projets, dans la vue choisie */
+  const afficher = (liste: Project[], rangeable = false) =>
+    vue === 'liste' ? (
+      <ul className="border border-ink-line divide-y divide-ink-line">
+        {liste.map((project) => (
+          <ProjectRow
+            key={project.id}
+            project={project}
+            rang={rangeable ? rangDe.get(project.id) : undefined}
+            afficherEspace={ongletValide === TOUS}
+            rangeable={rangeable}
+            dragProps={rangeable ? glisserDeposer(project.id) : undefined}
+          />
+        ))}
+      </ul>
+    ) : (
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+        {liste.map((project) =>
+          rangeable ? (
+            <div key={project.id} {...glisserDeposer(project.id)}>
+              <ProjectCard project={project} onView={handleViewProject} rang={rangDe.get(project.id)} />
+            </div>
+          ) : (
+            <ProjectCard key={project.id} project={project} onView={handleViewProject} />
+          ),
+        )}
+      </div>
+    );
+
   const basculerArchives = async () => {
     const ouvrir = !voirArchives;
     setVoirArchives(ouvrir);
@@ -208,7 +275,7 @@ export const ProjectsList = () => {
             </div>
 
             {/* Filtres */}
-            <div className="flex flex-col sm:flex-row gap-4">
+            <div className="flex gap-3">
               {/* Recherche */}
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-ink-faint" />
@@ -220,7 +287,20 @@ export const ProjectsList = () => {
                   className="w-full pl-10 pr-4 py-2 border border-ink-line rounded-none focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
                 />
               </div>
-
+              {/* Liste compacte ou cartes */}
+              <div className="flex self-center border border-ink-line shrink-0" role="group" aria-label="Affichage">
+                {([['liste', List, 'Liste'], ['cartes', LayoutGrid, 'Cartes']] as const).map(([v, Icone, libelle]) => (
+                  <button
+                    key={v}
+                    onClick={() => choisirVue(v)}
+                    aria-pressed={vue === v}
+                    title={libelle}
+                    className={`p-2 ${vue === v ? 'bg-ink text-paper' : 'text-ink-soft hover:text-ink'}`}
+                  >
+                    <Icone className="w-4 h-4" />
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Onglets d'espaces */}
@@ -286,34 +366,12 @@ export const ProjectsList = () => {
                       Actifs <span className="text-sm text-ink-faint figures">{actifsVisibles.length}</span>
                     </h2>
                     {actifsVisibles.length > 1 && (
-                      <p className="text-xs text-ink-faint">Glisse les cartes pour les ranger par priorité</p>
+                      <p className="text-xs text-ink-faint">
+                        Glisse {vue === 'liste' ? 'les lignes' : 'les cartes'} pour les ranger par priorité
+                      </p>
                     )}
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {actifsVisibles.map((project) => (
-                      <div
-                        key={project.id}
-                        draggable
-                        onDragStart={(e) => {
-                          setGlisse(project.id);
-                          e.dataTransfer.effectAllowed = 'move';
-                        }}
-                        onDragOver={(e) => {
-                          if (glisse !== null) e.preventDefault();
-                        }}
-                        onDrop={(e) => {
-                          e.preventDefault();
-                          deposerSur(project.id);
-                        }}
-                        onDragEnd={() => setGlisse(null)}
-                        className={`transition-opacity ${glisse === project.id ? 'opacity-40' : ''} ${
-                          glisse !== null && glisse !== project.id ? 'outline-dashed outline-1 outline-ink-line' : ''
-                        }`}
-                      >
-                        <ProjectCard project={project} onView={handleViewProject} rang={rangDe.get(project.id)} />
-                      </div>
-                    ))}
-                  </div>
+                  {afficher(actifsVisibles, true)}
                 </section>
               )}
 
@@ -322,11 +380,7 @@ export const ProjectsList = () => {
                   <h2 className="font-display text-xl text-ink mb-3">
                     En pause <span className="text-sm text-ink-faint figures">{enPauseVisibles.length}</span>
                   </h2>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {enPauseVisibles.map((project) => (
-                      <ProjectCard key={project.id} project={project} onView={handleViewProject} />
-                    ))}
-                  </div>
+                  {afficher(enPauseVisibles)}
                 </section>
               )}
 
@@ -339,13 +393,7 @@ export const ProjectsList = () => {
                     {voirSommeil ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
                     En sommeil <span className="text-sm text-ink-faint figures">{enSommeilVisibles.length}</span>
                   </button>
-                  {voirSommeil && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                      {enSommeilVisibles.map((project) => (
-                        <ProjectCard key={project.id} project={project} onView={handleViewProject} />
-                      ))}
-                    </div>
-                  )}
+                  {voirSommeil && afficher(enSommeilVisibles)}
                 </section>
               )}
             </div>
@@ -365,11 +413,7 @@ export const ProjectsList = () => {
               archivesVisibles.length === 0 ? (
                 <p className="text-sm text-ink-faint">Aucun projet archivé ici.</p>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 opacity-75">
-                  {archivesVisibles.map((project) => (
-                    <ProjectCard key={project.id} project={project} onView={handleViewProject} />
-                  ))}
-                </div>
+                <div className="opacity-75">{afficher(archivesVisibles)}</div>
               )
             )}
           </section>

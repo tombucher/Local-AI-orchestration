@@ -184,36 +184,40 @@ async def list_projects(
     result = await db.execute(query)
     projects = result.scalars().all()
 
-    # Enrichir avec les statistiques de tâches
+    # Statistiques de tâches de tous les projets en une requête (deux par
+    # projet auparavant) — de quoi résumer chaque projet sur une ligne
+    ids = [p.id for p in projects]
+    stats = {}
+    if ids:
+        ouverte = Task.status.not_in([TaskStatus.COMPLETED, TaskStatus.CANCELLED])
+        lignes = (await db.execute(
+            select(
+                Task.project_id,
+                func.count(Task.id).filter(Task.status != TaskStatus.CANCELLED),
+                func.count(Task.id).filter(Task.status == TaskStatus.COMPLETED),
+                func.count(Task.id).filter(Task.status == TaskStatus.CREATED),
+                func.count(Task.id).filter(Task.status == TaskStatus.MANUAL_REVIEW),
+                func.count(Task.id).filter(Task.status.in_([TaskStatus.READY, TaskStatus.GENERATING])),
+                func.count(Task.id).filter(Task.status == TaskStatus.FAILED),
+                func.min(Task.due_date).filter(ouverte),
+            ).where(Task.project_id.in_(ids)).group_by(Task.project_id)
+        )).all()
+        stats = {ligne[0]: ligne[1:] for ligne in lignes}
+
     project_responses = []
     for project in projects:
-        # Compter les tâches totales (excluant CANCELLED)
-        total_tasks_query = select(func.count(Task.id)).where(
-            and_(
-                Task.project_id == project.id,
-                Task.status != TaskStatus.CANCELLED
-            )
-        )
-        total_tasks_result = await db.execute(total_tasks_query)
-        tasks_total = total_tasks_result.scalar() or 0
-
-        # Compter les tâches complétées
-        completed_tasks_query = select(func.count(Task.id)).where(
-            and_(
-                Task.project_id == project.id,
-                Task.status == TaskStatus.COMPLETED
-            )
-        )
-        completed_tasks_result = await db.execute(completed_tasks_query)
-        tasks_completed = completed_tasks_result.scalar() or 0
-
-        # Créer ProjectResponse avec les stats
-        project_dict = {
+        total_, faites, a_activer, a_valider, en_cours, en_echec, echeance = stats.get(
+            project.id, (0, 0, 0, 0, 0, 0, None))
+        project_responses.append(ProjectResponse(**{
             **project.__dict__,
-            'tasks_total': tasks_total,
-            'tasks_completed': tasks_completed
-        }
-        project_responses.append(ProjectResponse(**project_dict))
+            'tasks_total': total_,
+            'tasks_completed': faites,
+            'tasks_to_activate': a_activer,
+            'tasks_to_review': a_valider,
+            'tasks_running': en_cours,
+            'tasks_failed': en_echec,
+            'next_due_date': echeance,
+        }))
 
     return ProjectList(
         items=project_responses,

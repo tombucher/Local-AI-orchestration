@@ -110,6 +110,12 @@ class ProjectResponse(ProjectBase):
     # Statistiques optionnelles (pour la liste de projets)
     tasks_total: Optional[int] = None
     tasks_completed: Optional[int] = None
+    # Pour résumer un projet sur une ligne (liste des projets)
+    tasks_to_activate: Optional[int] = None
+    tasks_to_review: Optional[int] = None
+    tasks_running: Optional[int] = None
+    tasks_failed: Optional[int] = None
+    next_due_date: Optional[datetime] = None  # prochaine échéance d'une tâche non terminée
 
     class Config:
         from_attributes = True

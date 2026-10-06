@@ -127,3 +127,25 @@ async def test_automatismes_arretes_pour_un_projet_en_pause(client, auth_headers
     orchestrateur.handle_task = ne_pas_lancer
     assert await orchestrateur._process_auto_tasks(batch_size=5) == 0
     assert traitees == []
+
+
+@pytest.mark.asyncio
+async def test_liste_resume_chaque_projet_en_une_requete(client, auth_headers, db_session):
+    from datetime import datetime, timezone
+
+    (pid,) = await _projets(client, auth_headers, "Résumé")
+    proche = datetime(2026, 11, 2, 18, tzinfo=timezone.utc)
+    db_session.add_all([
+        Task(project_id=pid, title="A", task_type=TaskType.RESEARCH, status=TaskStatus.CREATED, due_date=proche),
+        Task(project_id=pid, title="B", task_type=TaskType.RESEARCH, status=TaskStatus.CREATED,
+             due_date=datetime(2026, 12, 1, tzinfo=timezone.utc)),
+        Task(project_id=pid, title="C", task_type=TaskType.RESEARCH, status=TaskStatus.MANUAL_REVIEW),
+        Task(project_id=pid, title="D", task_type=TaskType.RESEARCH, status=TaskStatus.COMPLETED,
+             due_date=datetime(2026, 1, 1, tzinfo=timezone.utc)),   # terminée : pas une échéance
+        Task(project_id=pid, title="E", task_type=TaskType.RESEARCH, status=TaskStatus.CANCELLED),
+    ])
+    await db_session.commit()
+
+    p = (await client.get("/api/v1/projects/", headers=auth_headers)).json()["items"][0]
+    assert (p["tasks_total"], p["tasks_completed"], p["tasks_to_activate"], p["tasks_to_review"]) == (4, 1, 2, 1)
+    assert p["next_due_date"].startswith("2026-11-02")

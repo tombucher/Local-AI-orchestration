@@ -57,6 +57,7 @@ export interface Task {
   validation_notes: string | null;
   estimated_duration: number | null;
   actual_duration: number | null;
+  due_date?: string | null;  // échéance
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
