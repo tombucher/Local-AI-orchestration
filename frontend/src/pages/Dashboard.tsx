@@ -17,6 +17,7 @@ import { ProjectCard } from '../components/ProjectCard';
 import { ServiceStatus } from '../components/ServiceStatus';
 import { DailyReport, SuggestedTask } from '../types/daily-report.types';
 import { aujourdhui } from '../components/Layout/BriefingNotifier';
+import { etatDe } from '../utils/projectState';
 import toast from 'react-hot-toast';
 import { TaskStatus } from '../types/task.types';
 import type { VeilleResult } from '../types/task.types';
@@ -87,7 +88,8 @@ export const Dashboard = () => {
   const projectsArray = Array.isArray(projects) ? projects : [];
   const tasksArray = Array.isArray(tasks) ? tasks : [];
 
-  const recentProjects = projectsArray.slice(0, 4);
+  // Les projets actifs, dans l'ordre de priorité choisi (l'API les renvoie triés)
+  const recentProjects = projectsArray.filter((p) => etatDe(p) === 'actif').slice(0, 4);
   const tasksToReview = tasksArray.filter((t) => t.status === TaskStatus.MANUAL_REVIEW).slice(0, 5);
   const completedToday = dailyReport?.completed_today ?? 0;
   const criticalProjects = dailyReport?.projects.filter((p) => p.health_status === 'critical') ?? [];

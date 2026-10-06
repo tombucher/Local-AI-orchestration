@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import (
-    Column, Integer, String, Text, DateTime, Enum as SQLEnum,
+    Column, Date, Integer, String, Text, DateTime, Enum as SQLEnum,
     ForeignKey, JSON
 )
 from sqlalchemy.orm import relationship
@@ -23,7 +23,8 @@ class ProjectStatus(str, enum.Enum):
     PLANNING = "PLANNING"       
     ACTIVE = "ACTIVE"           
     ARCHIVED = "ARCHIVED"
-    PAUSED = "PAUSED"
+    PAUSED = "PAUSED"     # en pause : reprend seul à resume_on si une date est donnée
+    DORMANT = "DORMANT"   # en sommeil : mis de côté sans date, pour le long terme
 
 class Project(Base):
     """
@@ -55,6 +56,12 @@ class Project(Base):
     # Espace (Recherche, Pro, Mairie…) : le dossier qui contient le dossier du
     # projet ; choisi à la main pour un projet sans fiche. None = sans espace.
     space = Column(String(120), nullable=True, index=True)
+
+    # Ordre de priorité choisi par l'utilisateur (1 = le plus important) ;
+    # None = pas encore rangé, placé après les autres
+    priority_rank = Column(Integer, nullable=True, index=True)
+    # Projet en pause : date à laquelle il redevient actif tout seul
+    resume_on = Column(Date, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

@@ -1,7 +1,7 @@
 """
 Pydantic schemas for Projects
 """
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional, List
 from pydantic import BaseModel, Field, field_validator
 
@@ -82,6 +82,8 @@ class ProjectUpdate(BaseModel):
     features: Optional[ProjectFeatures] = None
     financial_config: Optional[FinancialConfig] = None
     space: Optional[str] = Field(None, max_length=120)
+    # Date de reprise d'un projet en pause (ignorée pour les autres états)
+    resume_on: Optional[date] = None
 
     @field_validator('space')
     @classmethod
@@ -102,6 +104,9 @@ class ProjectResponse(ProjectBase):
     maturity_score: int = 0
     # Fiche .md d'origine (projet tenu dans un dossier du Mac), sinon None
     source_path: Optional[str] = None
+    # Ordre de priorité (1 = le plus important) et reprise d'un projet en pause
+    priority_rank: Optional[int] = None
+    resume_on: Optional[date] = None
     # Statistiques optionnelles (pour la liste de projets)
     tasks_total: Optional[int] = None
     tasks_completed: Optional[int] = None

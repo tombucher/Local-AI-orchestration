@@ -5,6 +5,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional, List
 
+from pydantic import BaseModel, Field
+
 logger = logging.getLogger(__name__)
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status, Query
 from sqlalchemy import select, func, and_, case, or_
@@ -40,6 +42,7 @@ from app.models.task_log import TaskLog, TaskEventType
 from app.services.project_analyzer import ProjectAnalyzer, TaskSuggestion, AnalysisError
 from app.services.critical_path import CriticalPathService
 from app.services.maturity import MaturityService
+from app.services.project_state import resume_due_projects
 from app.services.project_export import build_zip, collect_project_files, entry_page, zip_filename
 from app.services.code_language import detect_language
 from app.services.project_folders import (
@@ -72,6 +75,28 @@ async def import_project_markdown(
         raise HTTPException(status_code=400, detail="Le fichier est vide.")
     projet = await import_markdown_file(db, current_user.id, file.filename, texte)
     return {"id": projet.id, "name": projet.name, "source_path": projet.source_path}
+
+
+class ProjectReorder(BaseModel):
+    project_ids: List[int] = Field(..., max_length=500)
+
+
+@router.post("/reorder")
+async def reorder_projects(
+    payload: ProjectReorder,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Ordre de priorité des projets : ids du plus au moins important."""
+    projets = {p.id: p for p in (await db.execute(select(Project).where(
+        Project.user_id == current_user.id, Project.id.in_(payload.project_ids)))).scalars().all()}
+    rang = 0
+    for project_id in payload.project_ids:
+        if project_id in projets:  # les ids d'autres utilisateurs sont ignorés
+            rang += 1
+            projets[project_id].priority_rank = rang
+    await db.commit()
+    return {"ranked": rang}
 
 
 @router.get("/spaces")
@@ -130,6 +155,10 @@ async def list_projects(
 
     Par défaut, exclut les projets archivés
     """
+    # Les projets en pause dont la date de reprise est arrivée redeviennent actifs
+    if await resume_due_projects(db, current_user.id):
+        await db.commit()
+
     # Requête de base
     query = select(Project).where(Project.user_id == current_user.id)
 
@@ -142,8 +171,8 @@ async def list_projects(
         # Par défaut, exclure les projets archivés
         query = query.where(Project.status != ProjectStatus.ARCHIVED)
     
-    # Tri par date de mise à jour décroissante
-    query = query.order_by(Project.updated_at.desc())
+    # Ordre de priorité choisi, puis les projets pas encore rangés (plus récents d'abord)
+    query = query.order_by(Project.priority_rank.asc().nulls_last(), Project.updated_at.desc())
 
     # Count total
     count_query = select(func.count()).select_from(query.subquery())
@@ -277,6 +306,11 @@ async def update_project(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Ce projet est tenu dans un dossier : déplace son dossier dans le Finder pour changer d'espace.",
         )
+
+    # Une date de reprise n'a de sens que pour un projet en pause
+    nouveau_statut = update_data.get('status', project.status)
+    if nouveau_statut != ProjectStatus.PAUSED:
+        update_data['resume_on'] = None
 
     # model_dump() convertit déjà tout en dict, pas besoin de reconvertir
     # Les champs features et financial_config sont déjà des dict après model_dump()

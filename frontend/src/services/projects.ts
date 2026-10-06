@@ -22,6 +22,17 @@ export const projectsService = {
     return response.data.items || [];
   },
 
+  /** Projets archivés (exclus de la liste par défaut) */
+  getArchivedProjects: async (): Promise<Project[]> => {
+    const response = await api.get<{ items: Project[] }>('/projects/?status=ARCHIVED&limit=100');
+    return response.data.items || [];
+  },
+
+  /** Ordre de priorité des projets actifs : ids du plus au moins important */
+  reorderProjects: async (projectIds: number[]): Promise<void> => {
+    await api.post('/projects/reorder', { project_ids: projectIds });
+  },
+
   /**
    * Récupérer un projet par ID
    */

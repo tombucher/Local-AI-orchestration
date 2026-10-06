@@ -8,7 +8,7 @@
 
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FolderDown, Plus, Search, FolderKanban } from 'lucide-react';
+import { ChevronDown, ChevronRight, FolderDown, Plus, Search, FolderKanban } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { projectFoldersApi } from '../../services/projectFoldersApi';
 import { useProjectsStore } from '../../stores/projectsStore';
@@ -16,7 +16,9 @@ import { Navbar } from '../../components/Layout/Navbar';
 import { Sidebar } from '../../components/Layout/Sidebar';
 import { ProjectCard } from '../../components/ProjectCard';
 import { EmptyState } from '../../components/EmptyState';
-import { ProjectStatus } from '../../types/project.types';
+import { ProjectStatus, type Project } from '../../types/project.types';
+import { projectsService } from '../../services/projects';
+import { etatDe } from '../../utils/projectState';
 import Loader from '../../components/ui/Loader';
 import MarkdownImport from '../../components/projects/MarkdownImport';
 
@@ -79,6 +81,62 @@ export const ProjectsList = () => {
   ];
 
   const [ecriture, setEcriture] = useState(false);
+
+  // --- Priorité : ordre des projets actifs, rangés par glisser-déposer -------
+  const [ordreLocal, setOrdreLocal] = useState<number[] | null>(null);
+  const [glisse, setGlisse] = useState<number | null>(null);
+  const [voirSommeil, setVoirSommeil] = useState(false);
+  const [voirArchives, setVoirArchives] = useState(false);
+  const [archives, setArchives] = useState<Project[] | null>(null);
+
+  // L'API renvoie les projets déjà triés par priorité ; l'ordre local ne sert
+  // qu'à afficher tout de suite un déplacement, le temps que le serveur le prenne
+  const actifsTries = (() => {
+    const actifs = tous.filter((p) => etatDe(p) === 'actif');
+    if (!ordreLocal) return actifs;
+    const parId = new Map(actifs.map((p) => [p.id, p]));
+    return [
+      ...ordreLocal.map((id) => parId.get(id)).filter((p): p is Project => !!p),
+      ...actifs.filter((p) => !ordreLocal.includes(p.id)),
+    ];
+  })();
+  const rangDe = new Map(actifsTries.map((p, i) => [p.id, i + 1]));
+  const actifsVisibles = actifsTries.filter((p) => visibles.includes(p));
+  const enPauseVisibles = visibles.filter((p) => etatDe(p) === 'pause');
+  const enSommeilVisibles = visibles.filter((p) => etatDe(p) === 'sommeil');
+  const archivesVisibles = archives?.filter((p) => dansOnglet(p, ongletValide)) ?? null;
+
+  const deposerSur = async (cible: number) => {
+    const source = glisse;
+    setGlisse(null);
+    if (source === null || source === cible) return;
+    const ids = actifsTries.map((p) => p.id);
+    const de = ids.indexOf(source);
+    const vers = ids.indexOf(cible);
+    ids.splice(de, 1);
+    ids.splice(vers, 0, source); // prend la place de la cible, qui glisse d'un cran
+    setOrdreLocal(ids);
+    try {
+      await projectsService.reorderProjects(ids);
+      await fetchProjects();
+    } catch {
+      // l'intercepteur affiche l'erreur ; on revient à l'ordre du serveur
+    } finally {
+      setOrdreLocal(null);
+    }
+  };
+
+  const basculerArchives = async () => {
+    const ouvrir = !voirArchives;
+    setVoirArchives(ouvrir);
+    if (ouvrir && archives === null) {
+      try {
+        setArchives(await projectsService.getArchivedProjects());
+      } catch {
+        setArchives([]);
+      }
+    }
+  };
   const sansFiche = (Array.isArray(projects) ? projects : []).filter(
     (p) => !p.source_path && p.status !== ProjectStatus.ARCHIVED,
   ).length;
@@ -191,7 +249,7 @@ export const ProjectsList = () => {
           </div>
 
           {/* Loading State */}
-          {loading && (
+          {loading && tous.length === 0 && (
             <div className="flex items-center justify-center py-12">
               <Loader size="lg" />
             </div>
@@ -218,14 +276,103 @@ export const ProjectsList = () => {
             />
           )}
 
-          {/* Projects Grid */}
-          {!loading && visibles.length > 0 && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {visibles.map((project) => (
-                <ProjectCard key={project.id} project={project} onView={handleViewProject} />
-              ))}
+          {/* Sections par état : actifs (rangés par priorité), en pause, en sommeil, archivés */}
+          {visibles.length > 0 && (
+            <div className="space-y-10">
+              {actifsVisibles.length > 0 && (
+                <section>
+                  <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3">
+                    <h2 className="font-display text-xl text-ink">
+                      Actifs <span className="text-sm text-ink-faint figures">{actifsVisibles.length}</span>
+                    </h2>
+                    {actifsVisibles.length > 1 && (
+                      <p className="text-xs text-ink-faint">Glisse les cartes pour les ranger par priorité</p>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {actifsVisibles.map((project) => (
+                      <div
+                        key={project.id}
+                        draggable
+                        onDragStart={(e) => {
+                          setGlisse(project.id);
+                          e.dataTransfer.effectAllowed = 'move';
+                        }}
+                        onDragOver={(e) => {
+                          if (glisse !== null) e.preventDefault();
+                        }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          deposerSur(project.id);
+                        }}
+                        onDragEnd={() => setGlisse(null)}
+                        className={`transition-opacity ${glisse === project.id ? 'opacity-40' : ''} ${
+                          glisse !== null && glisse !== project.id ? 'outline-dashed outline-1 outline-ink-line' : ''
+                        }`}
+                      >
+                        <ProjectCard project={project} onView={handleViewProject} rang={rangDe.get(project.id)} />
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {enPauseVisibles.length > 0 && (
+                <section>
+                  <h2 className="font-display text-xl text-ink mb-3">
+                    En pause <span className="text-sm text-ink-faint figures">{enPauseVisibles.length}</span>
+                  </h2>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {enPauseVisibles.map((project) => (
+                      <ProjectCard key={project.id} project={project} onView={handleViewProject} />
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {enSommeilVisibles.length > 0 && (
+                <section>
+                  <button
+                    onClick={() => setVoirSommeil((v) => !v)}
+                    className="font-display text-xl text-ink mb-3 flex items-center gap-2 hover:text-accent"
+                  >
+                    {voirSommeil ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
+                    En sommeil <span className="text-sm text-ink-faint figures">{enSommeilVisibles.length}</span>
+                  </button>
+                  {voirSommeil && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                      {enSommeilVisibles.map((project) => (
+                        <ProjectCard key={project.id} project={project} onView={handleViewProject} />
+                      ))}
+                    </div>
+                  )}
+                </section>
+              )}
             </div>
           )}
+
+          {/* Archivés : chargés seulement à la demande */}
+          <section className="mt-10">
+            <button
+              onClick={basculerArchives}
+              className="font-display text-xl text-ink-soft mb-3 flex items-center gap-2 hover:text-accent"
+            >
+              {voirArchives ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
+              Archivés
+              {archivesVisibles && <span className="text-sm text-ink-faint figures">{archivesVisibles.length}</span>}
+            </button>
+            {voirArchives && archivesVisibles && (
+              archivesVisibles.length === 0 ? (
+                <p className="text-sm text-ink-faint">Aucun projet archivé ici.</p>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 opacity-75">
+                  {archivesVisibles.map((project) => (
+                    <ProjectCard key={project.id} project={project} onView={handleViewProject} />
+                  ))}
+                </div>
+              )
+            )}
+          </section>
         </main>
       </div>
     </div>

@@ -108,11 +108,16 @@ async def check_veille_recurrence_job() -> None:
             now = datetime.utcnow()
 
             # Chercher les topics avec next_scan dépassé et pas de tâche active
+            from app.models.project import Project
+            from app.services.project_state import ACTIVE_STATUSES
             topics_query = (
                 select(VeilleTopic)
+                .join(Project, Project.id == VeilleTopic.project_id)
                 .where(VeilleTopic.enabled == True)
                 .where(VeilleTopic.next_scan != None)  # noqa: E711
                 .where(VeilleTopic.next_scan <= now)
+                # projet en pause ou en sommeil : sa veille attend
+                .where(Project.status.in_(ACTIVE_STATUSES))
             )
             result = await db.execute(topics_query)
             due_topics = result.scalars().all()

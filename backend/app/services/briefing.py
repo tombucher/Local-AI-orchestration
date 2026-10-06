@@ -19,6 +19,7 @@ from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models.daily_report import DailyReport as DailyReportModel
 from app.services.daily_review_service import DailyReviewService
+from app.services.project_state import resume_due_projects
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,11 @@ async def build_and_store_report(db: AsyncSession, user_id: int, replace: bool =
         await db.delete(existing)
         await db.commit()
 
+    repris = await resume_due_projects(db, user_id)
     report = await DailyReviewService(db).generate_daily_report(user_id)
+    if repris:
+        noms = ", ".join(f"« {p.name} »" for p in repris)
+        report.summary = f"Reprise aujourd'hui : {noms}, sorti de pause. {report.summary}"
     report_db = DailyReportModel(
         user_id=report.user_id,
         date=today_local(),

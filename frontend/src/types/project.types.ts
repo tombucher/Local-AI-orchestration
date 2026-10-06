@@ -13,7 +13,8 @@ export enum ProjectStatus {
   PLANNING = 'PLANNING',
   ACTIVE = 'ACTIVE',
   ARCHIVED = 'ARCHIVED',
-  PAUSED = 'PAUSED',
+  PAUSED = 'PAUSED',    // en pause : reprend seul à `resume_on` si une date est donnée
+  DORMANT = 'DORMANT',  // en sommeil : mis de côté sans date, pour le long terme
 }
 
 export interface ProjectFeatures {
@@ -40,6 +41,8 @@ export interface Project {
   maturity_score: number;  // Score de maturité (0-100)
   source_path?: string | null;  // fiche .md d'origine (dossier de projets)
   space?: string | null;  // espace (Recherche, Pro, Mairie…) = dossier parent de la fiche
+  priority_rank?: number | null;  // ordre de priorité choisi (1 = le plus important)
+  resume_on?: string | null;      // date de reprise d'un projet en pause (AAAA-MM-JJ)
   repository_url?: string | null;
   created_at: string;
   updated_at: string;
@@ -78,6 +81,7 @@ export interface ProjectUpdate {
   features?: ProjectFeatures;
   financial_config?: FinancialConfig;
   space?: string | null;
+  resume_on?: string | null;
 }
 
 export interface ProjectStats {

@@ -84,12 +84,14 @@ class DailyReviewService:
 
         # 1. Récupérer les projets actifs de l'utilisateur (exclure les archivés)
         from app.models.project import ProjectStatus as ProjectStatusEnum
+        # Ni archivés, ni en pause, ni en sommeil ; dans l'ordre de priorité choisi
+        from app.services.project_state import ACTIVE_STATUSES
         stmt = select(Project).where(
             and_(
                 Project.user_id == user_id,
-                Project.status != ProjectStatusEnum.ARCHIVED
+                Project.status.in_(ACTIVE_STATUSES)
             )
-        )
+        ).order_by(Project.priority_rank.asc().nulls_last(), Project.updated_at.desc())
         result = await self.db.execute(stmt)
         projects = result.scalars().all()
 

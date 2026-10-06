@@ -8,8 +8,9 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { Archive, Edit, FileText, Image, MessagesSquare, MoreHorizontal, Sparkles } from 'lucide-react';
-import type { Project } from '../../types/project.types';
+import { Archive, Edit, FileText, Image, MessagesSquare, Moon, MoreHorizontal, Pause, Play, Sparkles } from 'lucide-react';
+import { ProjectStatus, type Project } from '../../types/project.types';
+import { etatDe, libelleEtat } from '../../utils/projectState';
 import { TaskStatus, type Task } from '../../types/task.types';
 import { Badge } from '../Badge';
 import WriteMarkdownButton from './WriteMarkdownButton';
@@ -23,6 +24,8 @@ interface ProjectHeaderProps {
   onMoodboard: () => void;
   onDelete: () => void;
   onFileWritten: () => void;
+  /** Pause (date de reprise facultative), sommeil, ou retour aux actifs */
+  onChangeState: (status: ProjectStatus, resumeOn?: string | null) => void;
 }
 
 const typeLabels: Record<string, string> = {
@@ -68,8 +71,11 @@ const MenuItem = ({ icon: Icone, label, onClick, danger = false }: {
 );
 
 export const ProjectHeader = ({
-  project, tasks, onDiscuss, onAnalyze, onEdit, onMoodboard, onDelete, onFileWritten,
+  project, tasks, onDiscuss, onAnalyze, onEdit, onMoodboard, onDelete, onFileWritten, onChangeState,
 }: ProjectHeaderProps) => {
+  const etat = etatDe(project);
+  const [pauseOuverte, setPauseOuverte] = useState(false);
+  const [reprise, setReprise] = useState('');
   const [menu, setMenu] = useState(false);
   const [descriptionEntiere, setDescriptionEntiere] = useState(false);
   const zoneMenu = useRef<HTMLDivElement>(null);
@@ -104,6 +110,15 @@ export const ProjectHeader = ({
         <div className="flex-1 min-w-[16rem]">
           {project.space && <p className="kicker mb-1">{project.space}</p>}
           <h1 className="font-display text-3xl text-ink leading-tight">{project.name}</h1>
+          {etat !== 'actif' && (
+            <div className="mt-2">
+              <p className="inline-flex items-center gap-2 text-sm text-warning">
+                {etat === 'sommeil' ? <Moon className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
+                {libelleEtat(project)}
+              </p>
+              <p className="text-xs text-ink-faint">Hors du briefing, veilles automatiques arrêtées.</p>
+            </div>
+          )}
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-ink-soft">
             <Badge label={typeLabels[project.type] || project.type} variant={project.type} />
             <span>{resumeDesTaches(tasks).join(' · ')}</span>
@@ -138,12 +153,59 @@ export const ProjectHeader = ({
                 <MenuItem icon={Image} label="Moodboard" onClick={choisir(onMoodboard)} />
                 <MenuItem icon={Sparkles} label="Proposer des tâches (analyse IA)" onClick={choisir(onAnalyze)} />
                 <div className="my-1 border-t border-ink-line" />
+                {etat === 'actif' ? (
+                  <>
+                    <MenuItem icon={Pause} label="Mettre en pause…" onClick={choisir(() => setPauseOuverte(true))} />
+                    <MenuItem icon={Moon} label="Mettre en sommeil" onClick={choisir(() => onChangeState(ProjectStatus.DORMANT))} />
+                  </>
+                ) : (
+                  <MenuItem icon={Play} label="Réactiver le projet" onClick={choisir(() => onChangeState(ProjectStatus.ACTIVE))} />
+                )}
+                <div className="my-1 border-t border-ink-line" />
                 <MenuItem icon={Archive} label="Archiver le projet" onClick={choisir(onDelete)} danger />
               </div>
             )}
           </div>
         </div>
       </div>
+
+      {pauseOuverte && (
+        <div className="mt-4 border border-ink-line bg-paper-warm p-4 flex flex-wrap items-end gap-3">
+          <div>
+            <label htmlFor="date-reprise" className="block text-sm text-ink mb-1">
+              Reprendre le (facultatif)
+            </label>
+            <input
+              id="date-reprise"
+              type="date"
+              value={reprise}
+              min={new Date().toLocaleDateString('en-CA')}
+              onChange={(e) => setReprise(e.target.value)}
+              className="px-3 py-1.5 border border-ink-line bg-paper-card text-sm"
+            />
+          </div>
+          <p className="text-xs text-ink-faint max-w-xs">
+            Ce jour-là, le projet revient seul dans les actifs et le briefing te le signale.
+          </p>
+          <div className="flex gap-2 ml-auto">
+            <button
+              onClick={() => setPauseOuverte(false)}
+              className="px-3 py-1.5 text-sm text-ink-soft hover:text-ink"
+            >
+              Annuler
+            </button>
+            <button
+              onClick={() => {
+                setPauseOuverte(false);
+                onChangeState(ProjectStatus.PAUSED, reprise || null);
+              }}
+              className="px-3 py-1.5 bg-accent text-white text-sm hover:opacity-90"
+            >
+              Mettre en pause
+            </button>
+          </div>
+        </div>
+      )}
 
       {description && (
         <div className="mt-4">

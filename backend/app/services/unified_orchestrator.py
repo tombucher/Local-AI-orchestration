@@ -38,6 +38,7 @@ from app.services.code_language import effective_path, file_slug
 from app.services.project_memory import build_project_memory, score_against_memory
 from app.services.task_progress import clear_progress, set_progress, task_finished, task_started
 from app.services.project_documents import build_document_context
+from app.services.project_state import ACTIVE_STATUSES
 from app.services.task_chain import brief_without_checklist, build_upstream_context, checklist_items
 from app.services.visual_scoring import score_images_with_vision, titre_illisible
 
@@ -161,6 +162,9 @@ class UnifiedOrchestrator:
         stmt = (
             select(Task)
             .filter(Task.status == TaskStatus.READY)
+            # projet en pause ou en sommeil : ses tâches attendent
+            .join(Project, Project.id == Task.project_id)
+            .filter(Project.status.in_(ACTIVE_STATUSES))
             .filter(Task.task_type.in_([t.value for t in self.AUTO_PROCESS_TYPES]))
             .order_by(Task.created_at.asc())
             .limit(batch_size)
@@ -1139,6 +1143,8 @@ Sois concret et directement applicable. Format Markdown."""
         stmt = (
             select(Task)
             .filter(Task.status == TaskStatus.FAILED)
+            .join(Project, Project.id == Task.project_id)
+            .filter(Project.status.in_(ACTIVE_STATUSES))
             .filter(Task.retry_count < max_retries)
             .filter(Task.last_failed_at != None)  # noqa: E711
             .order_by(Task.last_failed_at.asc())

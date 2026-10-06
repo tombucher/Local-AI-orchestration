@@ -52,7 +52,7 @@ type Onglet = (typeof ONGLETS)[number]['id'];
 export const ProjectDetail = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { currentProject, currentProjectStats, loading, fetchProject, fetchProjectStats, deleteProject } = useProjectsStore();
+  const { currentProject, currentProjectStats, loading, fetchProject, fetchProjectStats, deleteProject, updateProject } = useProjectsStore();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
   const [criticalPathData, setCriticalPathData] = useState<CriticalPathData | null>(null);
@@ -183,6 +183,19 @@ export const ProjectDetail = () => {
 
   const project = currentProject;
   const inIdeation = project.status === ProjectStatus.IDEATION;
+
+  const changerEtat = async (statut: ProjectStatus, reprise?: string | null) => {
+    try {
+      await updateProject(project.id, { status: statut, resume_on: statut === ProjectStatus.PAUSED ? reprise ?? null : null });
+      toast.success(
+        statut === ProjectStatus.PAUSED
+          ? reprise ? 'Projet en pause jusqu\'à la date choisie' : 'Projet en pause'
+          : statut === ProjectStatus.DORMANT ? 'Projet mis en sommeil' : 'Projet réactivé',
+      );
+    } catch {
+      // l'intercepteur affiche déjà l'erreur
+    }
+  };
   const tasksActives = tasks.filter((t) => t.status !== TaskStatus.CANCELLED).length;
 
   return (
@@ -205,6 +218,7 @@ export const ProjectDetail = () => {
         onMoodboard={() => navigate(`/projects/${id}/moodboard`)}
         onDelete={() => setConfirmDelete(true)}
         onFileWritten={() => fetchProject(project.id)}
+        onChangeState={changerEtat}
       />
 
       {inIdeation ? (

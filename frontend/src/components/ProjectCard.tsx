@@ -6,10 +6,13 @@ import { Code, Eye, GitBranch } from 'lucide-react';
 import { Project } from '../types/project.types';
 import { Badge } from './Badge';
 import { ProgressBar } from './ProgressBar';
+import { libelleEtat } from '../utils/projectState';
 
 interface ProjectCardProps {
   project: Project;
   onView: (id: number) => void;
+  /** Rang dans l'ordre de priorité (projets actifs) */
+  rang?: number;
 }
 
 const getTypeLabel = (type: string): string => {
@@ -21,7 +24,8 @@ const getTypeLabel = (type: string): string => {
   return labels[type] || type;
 };
 
-export const ProjectCard = ({ project, onView }: ProjectCardProps) => {
+export const ProjectCard = ({ project, onView, rang }: ProjectCardProps) => {
+  const etat = libelleEtat(project);
   // Utiliser les statistiques si disponibles, sinon 0
   const tasksCompleted = project.tasks_completed ?? 0;
   const tasksTotal = project.tasks_total ?? 0;
@@ -40,13 +44,17 @@ export const ProjectCard = ({ project, onView }: ProjectCardProps) => {
       {/* Header */}
       <div className="flex items-start justify-between mb-3">
         <div className="flex-1">
-          <h3 className="font-display text-xl text-ink mb-2 leading-snug group-hover:text-accent transition-colors">{project.name}</h3>
+          <h3 className="font-display text-xl text-ink mb-2 leading-snug group-hover:text-accent transition-colors">
+            {rang !== undefined && <span className="text-accent figures mr-2">{rang}.</span>}
+            {project.name}
+          </h3>
           <div className="flex gap-2">
             <Badge label={getTypeLabel(project.type)} variant={project.type} />
             {project.space && (
               <span className="self-center text-xs uppercase tracking-wider text-ink-faint">{project.space}</span>
             )}
           </div>
+          {etat && <p className="mt-2 text-xs text-warning">{etat}</p>}
         </div>
       </div>
 
