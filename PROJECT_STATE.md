@@ -1,12 +1,31 @@
 # 🚀 Orchestrateur IA — état du projet
 
-**Dernière mise à jour : 21 septembre 2026**
+**Dernière mise à jour : 11 novembre 2026**
 
 ## 📝 Ce que fait l'outil
 
-Journal d'atelier assisté par IA locale (Ollama) pour un créateur art numérique + tech. Il **pilote** les projets (décomposition en tâches, dépendances, chemin critique, score de maturité), **passe à l'action** (génération de code et de documents, veille textuelle, visuelle et appels à projets) et **donne envie de faire** (briefing du matin, prochaine action évidente, relance des projets qui dorment, célébrations).
+Journal d'atelier assisté par IA locale (Ollama) pour un créateur art numérique + tech. Il **pilote** les projets (fiches `.md` dans des dossiers du Mac, décomposition en tâches, dépendances, priorité, pause et sommeil), **passe à l'action** (génération de code et de documents, veille textuelle, visuelle et appels à projets) et **donne envie de faire** (briefing du matin, ce qui t'attend, prochaine action évidente, relance des projets qui dorment).
 
-Tout tourne en local : FastAPI + PostgreSQL dans Docker, React/Vite, Ollama natif sur macOS.
+Tout tourne en local : FastAPI + PostgreSQL dans Docker, React/Vite, Ollama natif sur macOS. Rien ne sort de la machine : les modèles cloud d'Ollama sont refusés.
+
+## 🗓 Novembre 2026 — passe « simple et utile au quotidien »
+
+Constat au 11/11 : 64 tâches « créées » dormaient, 0 en file, 0 à valider ; le journal annonçait « l'atelier est calme ». L'outil ne lance rien de lui-même et ne montrait pas ce qui attendait.
+
+- **Ce qui t'attend** sur le journal : à valider, en échec (*Relancer*), en cours, et **à lancer** par projet dans l'ordre de priorité (*Lancer*, dépendances respectées). Même bouton *Lancer* dans le tableau des tâches d'un projet.
+- La liste des tâches renvoyait **50 tâches maximum** : au-delà, le journal et la page Tâches en oubliaient en silence. Plafond à 500, dépendances incluses en une requête.
+- **Briefing sur le modèle rapide** (`OLLAMA_MODEL_PROMPT`) : il arrive en une minute au lieu de plusieurs ; plus d'« idées de relance » (une analyse complète par projet) pour un projet qui a déjà des tâches en attente. La « prochaine action évidente » se limite aux cinq projets prioritaires.
+- **`atelier.command`** : un double-clic lance Docker Desktop, Ollama, les services, les migrations et ouvre l'interface. `stop` arrête tout. Open WebUI passe en profil optionnel (`--profile chat`).
+- **Navigation sur téléphone** : le bouton ☰ n'ouvrait rien ; il ouvre le sommaire.
+- **Paramètres** : un tableau usage → modèle au lieu de cinq cadres de boutons radio ; un compte neuf reçoit des modèles installés, plus mistral/devstral.
+- Le journal signale **Ollama injoignable** au lieu de laisser échouer en silence.
+- Dépôt nettoyé : scripts obsolètes (`start.sh`, `setup-ollama.sh` qui tirait Mistral 7B, `trigger_gen.sh`, `test_endpoints.py`), `archive/`, `launch.md` (fondu dans le README), `package.json` racine (Vue/Pinia, étranger au projet), composants React jamais importés.
+
+### Octobre 2026
+- **Projets en liste compacte** dépliable (vue d'ensemble sans défiler), **ordre de priorité** par glisser-déposer, **pause** (avec date de reprise automatique) et **sommeil**.
+- **Fiches `.md`** : un dossier du Mac choisi dans Paramètres, un sous-dossier par **espace**, un dossier par projet avec sa fiche ; synchronisation toutes les 30 s dans les deux sens (cases cochées), fichiers générés rangés dans le dossier du projet, bouton *Écrire la fiche*.
+- **Discussion avec l'IA sur un projet existant** pour en tirer des tâches ; page projet en onglets.
+- Chaînage des tâches (chaque rédaction reçoit les résultats en amont), fichiers reliés entre eux, export du projet en bloc, aperçu qui reconnaît le langage d'après le contenu.
 
 ## ✅ Ce qui fonctionne (vérifié de bout en bout)
 
@@ -47,14 +66,14 @@ Tout tourne en local : FastAPI + PostgreSQL dans Docker, React/Vite, Ollama nati
 - Contexte : DuckDuckGo répondait 202 sur 100 % des requêtes (veille textuelle à zéro résultat) et l'offre gratuite de Brave n'existe plus. Après bascule : 42 résultats bruts, 11 pertinents sur une veille tech qui en rendait 0.
 
 ### Socle
-- Scheduler (queue toutes les 2 min, veilles toutes les 15 min, watchdog 5 min, rapports 8h), retry avec backoff.
+- Scheduler (queue toutes les 2 min, veilles toutes les 15 min, watchdog 5 min, fiches `.md` toutes les 30 s, briefing 8h heure de Paris rattrapé au réveil), retry avec backoff.
 - **Registre de modèles** : si un modèle Ollama configuré n'existe plus, repli automatique sur un modèle installé ; thinking désactivé par détection de capacités.
 - Design system « journal d'atelier » (papier/encre/vermillon, Fraunces + Archivo), PWA installable.
-- **188 tests** backend (`./run_tests.sh`), sauvegardes Postgres quotidiennes (`./backups/`), rotation des logs.
+- **~300 tests** backend (`./run_tests.sh`), sauvegardes Postgres quotidiennes (`./backups/`), rotation des logs.
 
 ## 🔒 Sécurité (audit du 19/09/2026)
 - Isolation par utilisateur sur tous les endpoints ; 401 sans jeton, 404 sur les données d'autrui.
-- Postgres et Open WebUI liés à `127.0.0.1` ; anti-brute-force sur le login (10 échecs / 15 min) ; garde-fou SSRF sur les récupérations de pages.
+- Postgres et SearXNG liés à `127.0.0.1` (Open WebUI optionnel, profil `chat`) ; anti-brute-force sur le login (10 échecs / 15 min) ; garde-fou SSRF sur les récupérations de pages.
 - Dépendances à jour (fastapi 0.141 / starlette 1.6, react-router 7, 0 vulnérabilité npm).
 - À faire par toi : renforcer `POSTGRES_PASSWORD` ; ajouter une clé Brave Search pour fiabiliser la recherche web.
 
@@ -91,7 +110,6 @@ Les modèles changent souvent : ne jamais coder un nom en dur, passer par `backe
 - Recherche de financements qui renvoyait des datasets data.gouv au lieu d'appels à projets.
 - `GET /tasks/{id}/logs` en 500 ; CORS hardcodé ; ~30 erreurs TypeScript qui cassaient `npm run build`.
 
-Rapport de validation historique (janvier 2026) : `archive/VALIDATION_QA.md`.
 
 ## 🗺 Pistes suivantes
 
@@ -107,4 +125,4 @@ Sources écartées volontairement : **Unsplash** (API réservée aux usages « n
 Ce qui dépend de toi : créer la clé gratuite Pexels si tu veux cette source ; installer Tailscale (+ `tailscale serve`), installer l'app ntfy et choisir un topic. Idées ensuite : Web Push natif (une fois en HTTPS), Gantt avec déplacement des échéances, export PDF du briefing.
 
 ## 💡 Reprise de session
-Lire ce fichier, puis `PROJECT_STRUCTURE.md` pour l'architecture. Lancer : `docker compose up -d`, vérifier `curl localhost:8000/health`, tests : `./run_tests.sh`.
+Lire ce fichier, puis `PROJECT_STRUCTURE.md` pour l'architecture. Lancer : `./atelier.command`, vérifier `curl localhost:8000/health`, tests : `./run_tests.sh`. Avant toute modification du backend, vérifier qu'aucune tâche n'est en `GENERATING` : le rechargement d'uvicorn tue les tâches de fond.

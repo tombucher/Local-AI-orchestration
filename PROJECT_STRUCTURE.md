@@ -1,21 +1,20 @@
 # Architecture technique — Orchestrateur IA
 
-Mise à jour : 19 septembre 2026.
+Mise à jour : 11 novembre 2026.
 
 ## 📁 Racine
 
 ```
 orchestrateur-ia/
 ├── .env.example            # Variables d'environnement (copier en .env)
-├── docker-compose.yml      # postgres, backend, frontend, open-webui, db-backup
-├── launch.md               # Lancement pas à pas
-├── PROJECT_STATE.md        # État fonctionnel, sécurité, roadmap
+├── atelier.command         # Ouvrir l'atelier d'un double-clic (Docker, Ollama, services, migrations)
+├── docker-compose.yml      # postgres, searxng, backend, frontend, db-backup (+ open-webui, profil chat)
+├── PROJECT_STATE.md        # État fonctionnel, sécurité, historique
 ├── PROJECT_STRUCTURE.md    # Ce fichier
-├── README.md               # Présentation, installation, commandes
+├── README.md               # Présentation, usage quotidien, installation
 ├── run_tests.sh            # Tests backend dans le conteneur
-├── setup-ollama.sh / start.sh
+├── searxng/settings.yml    # Métamoteur local (le format json doit être activé)
 ├── backups/                # Sauvegardes Postgres quotidiennes (ignoré par git)
-├── archive/                # Anciens documents et tests
 ├── backend/
 └── frontend/
 ```
@@ -28,7 +27,7 @@ backend/
 ├── requirements.txt           # dépendances runtime
 ├── requirements-dev.txt       # + pytest, pytest-asyncio, httpx, pytest-cov
 ├── pytest.ini                 # asyncio_mode=auto
-├── alembic/versions/          # 14 migrations (dernière : add_veille_advanced_fields)
+├── alembic/versions/          # 19 migrations (dernière : add_project_priority)
 ├── app/
 │   ├── main.py                # FastAPI, CORS (settings), handlers d'erreurs, scheduler
 │   ├── core/
@@ -46,7 +45,7 @@ backend/
 │   │   ├── ideation.py        # dialogue socratique (SSE)
 │   │   ├── orchestrator.py    # status, queue, stats, force generate
 │   │   ├── reports.py         # briefings quotidiens
-│   │   ├── settings.py        # préférences de modèles, liste des modèles Ollama
+│   │   ├── settings.py        # modèles par usage, flux RSS, dossier de projets (browse, sync)
 │   │   └── time.py            # chrono / entrées de temps
 │   ├── models/                # User, UserSettings, Project, Task (+task_dependencies),
 │   │                          # TaskLog, TimeEntry, DailyReport, IdeationMessage,
@@ -54,7 +53,13 @@ backend/
 │   ├── schemas/               # Pydantic (dont project_analysis, veille_result)
 │   ├── prompts/ideation_prompts.py
 │   └── services/
-│       ├── model_registry.py        # resolve_model() + think_kwargs() — TOUT appel LLM passe par là
+│       ├── model_registry.py        # resolve_model() + think_kwargs() — TOUT appel LLM passe par là ; cloud refusé
+│       ├── project_folders.py       # dossier de projets du Mac : scan, sync fiche ↔ outil, export des fichiers
+│       ├── project_markdown.py      # format de la fiche .md (lire / écrire, inverses exacts)
+│       ├── project_state.py         # ACTIVE_STATUSES, reprise des projets en pause
+│       ├── briefing.py              # briefing à l'heure locale, préparé à l'ouverture si absent
+│       ├── task_chain.py            # contexte amont d'une tâche (résultats des tâches précédentes)
+│       ├── code_language.py / code_contract.py / project_export.py  # langage d'après le contenu, cohérence, export zip
 │       ├── llm_client.py            # génération code/texte (streaming, double passe thinking)
 │       ├── unified_orchestrator.py  # dispatch par type de tâche, veille, financements,
 │       │                            # veille visuelle, retry
@@ -72,7 +77,7 @@ backend/
 │           ├── document_generator.py
 │           └── prompt_generator.py
 ├── scripts/seed_demo_data.py
-└── tests/                     # 39 tests : auth, projets, tâches, erreurs
+└── tests/                     # ~300 tests : auth, projets, tâches, fiches .md, briefing, priorité…
     ├── conftest.py            # base orchestrator_test créée automatiquement
     └── test_*.py
 ```
@@ -99,21 +104,23 @@ frontend/
     ├── App.tsx                # routes (react-router 7)
     ├── index.css              # fontes Fontsource, .kicker, .standfirst, .rule, .figures
     ├── components/
-    │   ├── ui/                # Button, Card, Input, Select, ConfirmDialog, FieldError, Loader
-    │   ├── Layout/            # Navbar (chrono), Sidebar (sommaire)
+    │   ├── ui/                # ConfirmDialog, Loader
+    │   ├── Layout/            # Navbar (chrono, sommaire en tiroir sur téléphone), Sidebar, BriefingNotifier
     │   ├── tasks/             # TaskHeader, TaskStatusPanel, TaskReviewActions,
     │   │                      # TaskResultPanel, taskTypeUtils, StatusBadge, PriorityBadge,
     │   │                      # TaskTypeBadge, CodeViewer, RadarViewer, VeilleResultsViewer,
     │   │                      # ValidationModal, TaskCard
-    │   ├── projects/          # ProjectHeader, ProjectInfoPanels, ProjectHealthDashboard,
-    │   │                      # ProjectTasksBoard, GanttChart, MaturityScore,
-    │   │                      # MaturityIndicators, AIAnalysisButton
+    │   ├── projects/          # ProjectHeader, ProjectRow (liste compacte), ProjectTasksBoard (Lancer),
+    │   │                      # ProjectDiscussion, ProjectOutputs, ProjectDocuments, WriteMarkdownButton,
+    │   │                      # MarkdownImport, ProjectHealthDashboard, GanttChart, MaturityScore
+    │   ├── settings/          # ProjectsFolderSettings, BriefingSettings, FeedLibrary
     │   ├── IdeationChat.tsx / UnifiedProjectChat.tsx / FinalizationValidationModal.tsx
-    │   ├── DailyReportCard.tsx, ProjectCard.tsx, ServiceStatus.tsx, TimerWidget.tsx,
+    │   ├── CeQuiAttend.tsx (à valider / en échec / en cours / à lancer), ProjectCard.tsx,
+    │   │   ServiceStatus.tsx (compteurs + Ollama joignable), TimerWidget.tsx,
     │   │   Badge.tsx, EmptyState.tsx, ProgressBar.tsx, StatsCard.tsx
     │   └── auth/ProtectedRoute.tsx
     ├── pages/
-    │   ├── Dashboard.tsx      # « une de journal » : briefing, actions évidentes, échéances
+    │   ├── Dashboard.tsx      # « une de journal » : briefing, ce qui t'attend, projets, échéances
     │   ├── Login.tsx / Register.tsx / Settings.tsx
     │   ├── Projects/          # ProjectsList, ProjectDetail, ProjectForm, ProjectAnalysis,
     │   │                      # ProjectMoodboard

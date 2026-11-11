@@ -6,7 +6,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { FolderKanban, CheckSquare, Plus, Eye, AlertTriangle, ArrowRight, Flame, Sparkles, CalendarClock } from 'lucide-react';
+import { FolderKanban, Plus, AlertTriangle, ArrowRight, Flame, Sparkles, CalendarClock } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { useProjectsStore } from '../stores/projectsStore';
@@ -15,11 +15,11 @@ import { Navbar } from '../components/Layout/Navbar';
 import { Sidebar } from '../components/Layout/Sidebar';
 import { ProjectCard } from '../components/ProjectCard';
 import { ServiceStatus } from '../components/ServiceStatus';
+import { CeQuiAttend } from '../components/CeQuiAttend';
 import { DailyReport, SuggestedTask } from '../types/daily-report.types';
 import { aujourdhui } from '../components/Layout/BriefingNotifier';
 import { etatDe } from '../utils/projectState';
 import toast from 'react-hot-toast';
-import { TaskStatus } from '../types/task.types';
 import type { VeilleResult } from '../types/task.types';
 import { api } from '../services/api';
 
@@ -90,7 +90,6 @@ export const Dashboard = () => {
 
   // Les projets actifs, dans l'ordre de priorité choisi (l'API les renvoie triés)
   const recentProjects = projectsArray.filter((p) => etatDe(p) === 'actif').slice(0, 4);
-  const tasksToReview = tasksArray.filter((t) => t.status === TaskStatus.MANUAL_REVIEW).slice(0, 5);
   const completedToday = dailyReport?.completed_today ?? 0;
   const criticalProjects = dailyReport?.projects.filter((p) => p.health_status === 'critical') ?? [];
 
@@ -112,8 +111,10 @@ export const Dashboard = () => {
     return count;
   })();
 
-  // Projets avec une « prochaine action évidente » fournie par le briefing
-  const nextActions = (dailyReport?.projects ?? []).filter((p) => p.next_obvious_action);
+  // Projets avec une « prochaine action évidente » fournie par le briefing :
+  // les cinq premiers dans l'ordre de priorité, sinon vingt projets font une
+  // colonne entière avant d'arriver à ce qui attend vraiment
+  const nextActions = (dailyReport?.projects ?? []).filter((p) => p.next_obvious_action).slice(0, 5);
   // Projets stagnants avec suggestions de relance
   const stagnantProjects = (dailyReport?.projects ?? []).filter(
     (p) => p.is_stagnant && (p.suggested_tasks?.length ?? 0) > 0
@@ -256,6 +257,9 @@ export const Dashboard = () => {
             </section>
           )}
 
+          {/* ===== Ce qui ne bougera pas sans toi ===== */}
+          <CeQuiAttend tasks={tasksArray} projects={projectsArray} onChanged={() => fetchTasks()} />
+
           {/* ===== Grille magazine ===== */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             {/* Colonne principale : projets */}
@@ -301,38 +305,8 @@ export const Dashboard = () => {
               )}
             </section>
 
-            {/* Colonne latérale : à valider + service */}
+            {/* Colonne latérale : échéances + service */}
             <aside className="space-y-6 animate-fade-up" style={{ animationDelay: '240ms' }}>
-              {/* À valider */}
-              <div className="bg-paper-card border border-ink-line border-t-2 border-t-highlight shadow-card p-5">
-                <div className="flex items-center gap-2 mb-3 pb-2 rule">
-                  <Eye className="w-4 h-4 text-ink-soft" />
-                  <h2 className="font-display text-lg text-ink">À valider</h2>
-                  {tasksToReview.length > 0 && (
-                    <span className="ml-auto font-mono text-xs text-ink-faint figures">{tasksToReview.length}</span>
-                  )}
-                </div>
-                {tasksToReview.length > 0 ? (
-                  <ul className="space-y-2.5">
-                    {tasksToReview.map((task) => (
-                      <li key={task.id}>
-                        <Link
-                          to={`/tasks/${task.id}`}
-                          className="block text-sm text-ink-soft hover:text-accent transition-colors leading-snug"
-                        >
-                          {task.title}
-                          <span className="block text-[11px] text-ink-faint mt-0.5">{task.project_name}</span>
-                        </Link>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-sm text-ink-faint flex items-center gap-2">
-                    <CheckSquare className="w-4 h-4" /> Rien en attente — la voie est libre.
-                  </p>
-                )}
-              </div>
-
               {deadlines.length > 0 && (
                 <div className="bg-paper-card border border-ink-line border-t-2 border-t-accent shadow-card p-5">
                   <div className="flex items-center gap-2 mb-3 pb-2 rule">

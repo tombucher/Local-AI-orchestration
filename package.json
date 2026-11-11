@@ -1,8 +1,0 @@
-{
-  "dependencies": {
-    "pinia": "^3.0.4"
-  },
-  "devDependencies": {
-    "@vitejs/plugin-vue": "^5.2.4"
-  }
-}

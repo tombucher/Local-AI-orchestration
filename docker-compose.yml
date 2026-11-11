@@ -12,9 +12,12 @@ x-logging: &default-logging
 
 services:
   # ──────────────────────────────────────────────────────────
-  # Open WebUI - Interface ChatGPT-like pour Ollama
+  # Open WebUI - Interface ChatGPT-like pour Ollama (optionnel)
+  # Hors de l'orchestrateur : ne démarre qu'avec
+  #   docker compose --profile chat up -d
   # ──────────────────────────────────────────────────────────
   open-webui:
+    profiles: ["chat"]
     logging: *default-logging
     image: ghcr.io/open-webui/open-webui:main
     container_name: open-webui
@@ -215,9 +218,9 @@ volumes:
 # COMMANDES UTILES
 # ════════════════════════════════════════════════════════════
 # 
-# Démarrer    : docker-compose up -d
-# Arrêter     : docker-compose down
-# Logs        : docker-compose logs -f
-# Rebuild     : docker-compose up -d --build
-# Reset DB    : docker-compose down -v && docker-compose up -d
+# Démarrer    : ./atelier.command   (ou docker compose up -d)
+# Arrêter     : ./atelier.command stop
+# Logs        : docker compose logs -f backend
+# Rebuild     : docker compose up -d --build
+# Open WebUI  : docker compose --profile chat up -d
 #

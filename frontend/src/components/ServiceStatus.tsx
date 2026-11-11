@@ -6,6 +6,7 @@
 import { useState } from 'react';
 import { Activity } from 'lucide-react';
 import { tasksService } from '../services/tasks';
+import { api } from '../services/api';
 import { usePolling } from '../hooks/usePolling';
 import Loader from './ui/Loader';
 
@@ -30,12 +31,19 @@ const Row = ({ label, value, tone, pulse }: { label: string; value: number; tone
 export const ServiceStatus = () => {
   const [stats, setStats] = useState<ServiceStats | null>(null);
   const [loading, setLoading] = useState(true);
+  // null = pas encore su ; false = Ollama ne répond pas (rien ne pourra être généré)
+  const [ollama, setOllama] = useState<boolean | null>(null);
 
   // Rafraîchi toutes les 30 s, en pause quand l'onglet est caché
   usePolling(async () => {
     try {
-      const data = await tasksService.getServiceStats();
+      const [data, etat] = await Promise.all([
+        tasksService.getServiceStats(),
+        api.get<{ ollama_available: boolean }>('/orchestrator/status', { silentError: true })
+          .then((r) => r.data.ollama_available).catch(() => null),
+      ]);
       setStats(data);
+      setOllama(etat);
     } catch {
       // Silencieux : un raté de polling ne doit pas spammer l'utilisateur
     } finally {
@@ -69,6 +77,11 @@ export const ServiceStatus = () => {
             <Row label="En file d'attente" value={stats.ready} tone="bg-info" />
           )}
           <Row label="Terminées" value={stats.completed} tone="bg-success" />
+          {ollama === false && (
+            <p className="mt-3 text-xs text-danger">
+              Ollama ne répond pas : rien ne pourra être généré. Lance l'app Ollama (ou <code className="font-mono">ollama serve</code>).
+            </p>
+          )}
 
           {stats.generating === 0 && stats.manual_review === 0 && stats.ready === 0 && (
             <p className="text-xs text-ink-faint mt-3">Rien en cours — l'atelier est calme.</p>

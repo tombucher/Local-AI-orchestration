@@ -14,8 +14,10 @@ export const tasksService = {
     if (filters?.project_id) params.append('project_id', filters.project_id.toString());
     if (filters?.status) params.append('status', filters.status);
     if (filters?.priority) params.append('priority', filters.priority);
-    if (filters?.limit) params.append('limit', filters.limit.toString());
-    if (filters?.offset) params.append('offset', filters.offset.toString());
+    // Sans limite explicite, l'API rendait 50 tâches : au-delà, le journal et la
+    // liste en oubliaient en silence (93 tâches vivantes chez l'utilisateur réel)
+    params.append('limit', (filters?.limit ?? 500).toString());
+    if (filters?.offset) params.append('skip', filters.offset.toString());
 
     const response = await api.get<{ items: Task[]; total: number; page: number; page_size: number }>(`/tasks/?${params.toString()}`);
     // Le backend retourne un objet paginé, on extrait le tableau

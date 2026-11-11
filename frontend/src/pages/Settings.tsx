@@ -1,11 +1,15 @@
 /**
- * Page Settings
- * - Affiche et permet de modifier les paramètres utilisateur
- * - Sélection granulaire des modèles Ollama par type de tâche
+ * Paramètres : quel modèle pour quel usage, le dossier de projets, le
+ * briefing, les flux de veille.
+ *
+ * Avant : cinq grands cadres colorés listant chacun tous les modèles en
+ * boutons radio, suivis de conseils qui citaient des modèles disparus
+ * (codestral, mistral, llama). Avec deux modèles installés, c'était dix
+ * boutons pour un choix. Un tableau usage → modèle suffit.
  */
 
 import { useEffect, useState } from 'react';
-import { Settings as SettingsIcon, CheckCircle, AlertCircle, Code, Lightbulb, FileSearch, ListTodo, FileText } from 'lucide-react';
+import { AlertCircle, Check, Loader2 } from 'lucide-react';
 import { Navbar } from '../components/Layout/Navbar';
 import { Sidebar } from '../components/Layout/Sidebar';
 import { settingsApi } from '../services/settingsApi';
@@ -15,304 +19,129 @@ import FeedLibrary from '../components/settings/FeedLibrary';
 import BriefingSettings from '../components/settings/BriefingSettings';
 import ProjectsFolderSettings from '../components/settings/ProjectsFolderSettings';
 
-type ModelType = 'code' | 'text' | 'ideation' | 'analysis' | 'task_generation';
+type ChampModele = 'ollama_model_code' | 'ollama_model_text' | 'ollama_model_ideation'
+  | 'ollama_model_analysis' | 'ollama_model_task_generation';
 
-interface ModelSection {
-  key: ModelType;
-  field: keyof UserSettings;
-  icon: any;
-  title: string;
-  description: string;
-  color: string;
-}
-
-const MODEL_SECTIONS: ModelSection[] = [
-  {
-    key: 'code',
-    field: 'ollama_model_code',
-    icon: Code,
-    title: 'Génération de Code',
-    description: 'Modèle utilisé pour générer du code à partir des tâches',
-    color: 'blue',
-  },
-  {
-    key: 'text',
-    field: 'ollama_model_text',
-    icon: FileText,
-    title: 'Génération de Texte',
-    description: 'Modèle pour les tâches texte : recherche, admin, rédaction de documents. Les modèles thinking (qwen3) utilisent une double passe automatique.',
-    color: 'orange',
-  },
-  {
-    key: 'ideation',
-    field: 'ollama_model_ideation',
-    icon: Lightbulb,
-    title: 'Idéation / Brainstorming',
-    description: 'Modèle utilisé pour les sessions de chat d\'idéation',
-    color: 'yellow',
-  },
-  {
-    key: 'analysis',
-    field: 'ollama_model_analysis',
-    icon: FileSearch,
-    title: 'Analyse de Projet',
-    description: 'Modèle utilisé pour analyser et comprendre les projets',
-    color: 'purple',
-  },
-  {
-    key: 'task_generation',
-    field: 'ollama_model_task_generation',
-    icon: ListTodo,
-    title: 'Génération de Tâches',
-    description: 'Modèle utilisé pour suggérer et créer des tâches',
-    color: 'green',
-  },
+const USAGES: { champ: ChampModele; titre: string; detail: string }[] = [
+  { champ: 'ollama_model_code', titre: 'Code', detail: 'Fichiers générés depuis les tâches de code' },
+  { champ: 'ollama_model_text', titre: 'Textes', detail: 'Documents, recherches, tâches administratives' },
+  { champ: 'ollama_model_ideation', titre: 'Discussion', detail: 'Idéation et discussion sur un projet' },
+  { champ: 'ollama_model_analysis', titre: 'Analyse', detail: 'Lecture d\'un projet pour en proposer des tâches' },
+  { champ: 'ollama_model_task_generation', titre: 'Tâches', detail: 'Rédaction des tâches proposées' },
 ];
 
+const taille = (octets: number) => `${(octets / 1e9).toFixed(1)} Go`;
+
 export const Settings = () => {
-  const [models, setModels] = useState<OllamaModel[]>([]);
-  const [settings, setSettings] = useState<UserSettings | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState<ModelType | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<ModelType | null>(null);
+  const [modeles, setModeles] = useState<OllamaModel[]>([]);
+  const [reglages, setReglages] = useState<UserSettings | null>(null);
+  const [chargement, setChargement] = useState(true);
+  const [enregistrement, setEnregistrement] = useState<ChampModele | null>(null);
+  const [enregistre, setEnregistre] = useState<ChampModele | null>(null);
+  const [erreur, setErreur] = useState<string | null>(null);
 
   useEffect(() => {
-    loadData();
+    Promise.all([settingsApi.getOllamaModels(), settingsApi.getUserSettings()])
+      .then(([m, r]) => {
+        setModeles(m);
+        setReglages(r);
+      })
+      .catch((err: any) => setErreur(err.response?.data?.detail || 'Impossible de charger les paramètres. Le backend est-il lancé ?'))
+      .finally(() => setChargement(false));
   }, []);
 
-  const loadData = async () => {
+  const choisir = async (champ: ChampModele, nom: string) => {
+    setEnregistrement(champ);
+    setErreur(null);
     try {
-      setLoading(true);
-      setError(null);
-
-      const [modelsData, settingsData] = await Promise.all([
-        settingsApi.getOllamaModels(),
-        settingsApi.getUserSettings(),
-      ]);
-
-      setModels(modelsData);
-      setSettings(settingsData);
+      setReglages(await settingsApi.updateUserSettings({ [champ]: nom }));
+      setEnregistre(champ);
+      setTimeout(() => setEnregistre((c) => (c === champ ? null : c)), 2500);
     } catch (err: any) {
-      console.error('Failed to load settings:', err);
-      setError(
-        err.response?.data?.detail ||
-        'Impossible de charger les paramètres. Vérifiez que le backend est accessible.'
-      );
+      setErreur(err.response?.data?.detail || 'Le modèle n\'a pas pu être enregistré');
     } finally {
-      setLoading(false);
+      setEnregistrement(null);
     }
-  };
-
-  const handleModelChange = async (modelType: ModelType, modelName: string) => {
-    try {
-      setSaving(modelType);
-      setError(null);
-      setSuccess(null);
-
-      const section = MODEL_SECTIONS.find(s => s.key === modelType);
-      if (!section) return;
-
-      const updatedSettings = await settingsApi.updateUserSettings({
-        [section.field]: modelName,
-      });
-
-      setSettings(updatedSettings);
-      setSuccess(modelType);
-
-      // Masquer le message de succès après 3 secondes
-      setTimeout(() => setSuccess(null), 3000);
-    } catch (err: any) {
-      console.error('Failed to update model:', err);
-      setError(
-        err.response?.data?.detail ||
-        'Erreur lors de la mise à jour du modèle'
-      );
-    } finally {
-      setSaving(null);
-    }
-  };
-
-  const formatSize = (bytes: number): string => {
-    return `${(bytes / 1e9).toFixed(2)} GB`;
-  };
-
-  const getColorClasses = (color: string) => {
-    const colors: Record<string, { border: string; bg: string; text: string }> = {
-      blue: { border: 'border-info', bg: 'bg-info/5', text: 'text-info' },
-      orange: { border: 'border-warning', bg: 'bg-warning/5', text: 'text-warning' },
-      yellow: { border: 'border-warning', bg: 'bg-warning/5', text: 'text-warning' },
-      purple: { border: 'border-accent', bg: 'bg-accent-wash', text: 'text-accent-deep' },
-      green: { border: 'border-success', bg: 'bg-success/5', text: 'text-success' },
-    };
-    return colors[color] || colors.blue;
   };
 
   return (
     <div className="min-h-screen bg-paper">
       <Navbar />
-
       <div className="flex">
         <Sidebar />
+        <main className="flex-1 min-w-0 p-6 lg:p-10 max-w-4xl">
+          <header className="mb-8">
+            <p className="kicker">Réglages</p>
+            <h1 className="font-display text-4xl text-ink mt-1">Paramètres</h1>
+            <div className="rule-strong mt-4" />
+          </header>
 
-        {/* Main Content */}
-        <main className="flex-1 min-w-0 p-6 lg:p-8">
-          {/* Header */}
-          <div className="mb-8">
-            <div className="flex items-center gap-3 mb-2">
-              <SettingsIcon className="w-8 h-8 text-ink-soft" />
-              <h1 className="text-3xl font-bold text-ink">Paramètres</h1>
-            </div>
-            <p className="text-ink-soft">
-              Configurez les modèles IA pour chaque type de tâche
-            </p>
-          </div>
-
-          {/* Messages d'erreur globaux */}
-          {error && (
-            <div className="mb-6 p-4 bg-danger/5 border border-danger/30 rounded-none flex items-center gap-3">
-              <AlertCircle className="w-5 h-5 text-danger" />
-              <p className="text-danger">{error}</p>
+          {erreur && (
+            <div className="mb-6 p-4 bg-danger/5 border border-danger/30 flex items-center gap-3 text-danger">
+              <AlertCircle className="w-5 h-5 shrink-0" />
+              <p>{erreur}</p>
             </div>
           )}
 
-          {/* Loading state */}
-          {loading ? (
-            <div className="bg-paper-card rounded-none shadow-card border border-ink-line p-12 text-center">
-              <Loader size="lg" />
-              <p className="text-ink-soft">Chargement des paramètres...</p>
-            </div>
+          {chargement ? (
+            <div className="py-12 flex justify-center"><Loader size="lg" label="Lecture des réglages…" /></div>
           ) : (
-            <>
-              {/* Model Sections */}
-              <div className="space-y-6">
-                {MODEL_SECTIONS.map((section) => {
-                  const Icon = section.icon;
-                  const colors = getColorClasses(section.color);
-                  const currentModel = settings?.[section.field] as string;
-                  const isSaving = saving === section.key;
-                  const isSuccess = success === section.key;
-
-                  return (
-                    <div
-                      key={section.key}
-                      className={`bg-paper-card rounded-none shadow-card border-2 ${colors.border} overflow-hidden`}
-                    >
-                      {/* Section Header */}
-                      <div className={`${colors.bg} px-6 py-4 border-b-2 ${colors.border}`}>
-                        <div className="flex items-center gap-3 mb-1">
-                          <Icon className={`w-6 h-6 ${colors.text}`} />
-                          <h2 className="text-xl font-semibold text-ink">
-                            {section.title}
-                          </h2>
-                        </div>
-                        <p className="text-sm text-ink-soft ml-9">
-                          {section.description}
-                        </p>
-                      </div>
-
-                      {/* Success Message */}
-                      {isSuccess && (
-                        <div className="mx-6 mt-4 p-3 bg-success/5 border border-success/30 rounded-none flex items-center gap-2">
-                          <CheckCircle className="w-4 h-4 text-success" />
-                          <p className="text-sm text-success font-medium">
-                            Modèle mis à jour avec succès !
-                          </p>
-                        </div>
-                      )}
-
-                      {/* Model Selector */}
-                      <div className="p-6">
-                        {models.length > 0 ? (
-                          <div className="space-y-2">
-                            {models.map((model) => {
-                              const isSelected = currentModel === model.name;
-
-                              return (
-                                <label
-                                  key={model.name}
-                                  className={`
-                                    flex items-center gap-3 p-3 border-2 rounded-none cursor-pointer transition-all
-                                    ${
-                                      isSelected
-                                        ? `${colors.border} ${colors.bg}`
-                                        : 'border-ink-line hover:border-ink-line hover:bg-paper-warm'
-                                    }
-                                    ${isSaving ? 'opacity-50 cursor-not-allowed' : ''}
-                                  `}
-                                >
-                                  <input
-                                    type="radio"
-                                    name={`model-${section.key}`}
-                                    value={model.name}
-                                    checked={isSelected}
-                                    onChange={() => handleModelChange(section.key, model.name)}
-                                    disabled={isSaving}
-                                    className={`w-4 h-4 ${colors.text} focus:ring-2 focus:ring-offset-0`}
-                                  />
-                                  <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-2">
-                                      <span className="font-medium text-ink truncate">
-                                        {model.name}
-                                      </span>
-                                      {isSelected && (
-                                        <span className={`px-2 py-0.5 text-xs font-medium ${colors.bg} ${colors.text} rounded border ${colors.border}`}>
-                                          Actif
-                                        </span>
-                                      )}
-                                    </div>
-                                    <div className="text-xs text-ink-faint">
-                                      {formatSize(model.size)}
-                                    </div>
-                                  </div>
-                                </label>
-                              );
-                            })}
-                          </div>
-                        ) : (
-                          <div className="text-center py-8">
-                            <AlertCircle className="w-12 h-12 mx-auto mb-3 text-ink-faint" />
-                            <p className="text-ink-soft mb-2">Aucun modèle Ollama disponible</p>
-                            <p className="text-sm text-ink-faint">
-                              Assurez-vous qu'Ollama est installé et qu'au moins un modèle est téléchargé
-                            </p>
-                          </div>
-                        )}
-
-                        {isSaving && (
-                          <div className="mt-3 flex items-center justify-center gap-2 text-ink-soft">
-                            <Loader size="lg" />
-                            <span className="text-sm font-medium">Enregistrement...</span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+            <section className="bg-paper-card border border-ink-line shadow-card p-5 mb-6">
+              <div className="flex items-baseline justify-between gap-4 mb-1 pb-2 rule">
+                <h2 className="font-display text-2xl text-ink">Modèles</h2>
+                <p className="text-xs text-ink-faint">
+                  {modeles.length > 0 ? `${modeles.length} installé${modeles.length > 1 ? 's' : ''} dans Ollama` : 'Ollama injoignable'}
+                </p>
               </div>
+              <p className="text-sm text-ink-soft mb-4">
+                Tout tourne sur ta machine. Un gros modèle pour ce qui demande de la finesse,
+                un petit pour ce qui doit répondre vite. La veille et le briefing utilisent le modèle
+                rapide défini dans <code className="font-mono text-xs">.env</code> (<code className="font-mono text-xs">OLLAMA_MODEL_PROMPT</code>).
+              </p>
 
-              {/* Bibliothèque de flux RSS pour la veille */}
-              <div className="mt-6">
-                <ProjectsFolderSettings />
-                <BriefingSettings />
-                <FeedLibrary />
-              </div>
-
-              {/* Info supplémentaire */}
-              <div className="mt-6 bg-info/5 border border-info/30 rounded-none p-4">
-                <h3 className="font-semibold text-info mb-2">
-                  Conseils pour choisir les modèles
-                </h3>
-                <ul className="text-sm text-info space-y-1">
-                  <li>• <strong>Génération de Code</strong>: Utilisez codestral, deepseek-coder ou codellama pour de meilleurs résultats</li>
-                  <li>• <strong>Génération de Texte</strong>: Les modèles thinking (qwen3) utilisent une double passe automatique — plus lent mais bien meilleure qualité. Mistral est plus rapide.</li>
-                  <li>• <strong>Idéation</strong>: Les modèles génériques (mistral, llama) sont excellents pour la créativité</li>
-                  <li>• <strong>Analyse</strong>: Les modèles plus grands (13B+) offrent une meilleure compréhension</li>
-                  <li>• <strong>Génération de Tâches</strong>: Les modèles 7B sont suffisants et plus rapides</li>
+              {modeles.length === 0 ? (
+                <p className="text-sm text-ink-faint">
+                  Aucun modèle trouvé : lance Ollama, puis <code className="font-mono text-xs">ollama pull qwen3.8:27b-mlx</code>.
+                </p>
+              ) : (
+                <ul className="divide-y divide-ink-line/60">
+                  {USAGES.map(({ champ, titre, detail }) => {
+                    const actuel = (reglages?.[champ] as string | null) ?? '';
+                    const inconnu = actuel && !modeles.some((m) => m.name === actuel);
+                    return (
+                      <li key={champ} className="py-3 flex flex-wrap items-center gap-x-6 gap-y-2">
+                        <div className="w-40 shrink-0">
+                          <p className="font-medium text-ink">{titre}</p>
+                          <p className="text-xs text-ink-faint leading-snug">{detail}</p>
+                        </div>
+                        <select
+                          aria-label={`Modèle pour ${titre.toLowerCase()}`}
+                          value={actuel}
+                          disabled={enregistrement === champ}
+                          onChange={(e) => choisir(champ, e.target.value)}
+                          className="flex-1 min-w-[14rem] px-3 py-2 border border-ink-line bg-paper text-sm text-ink focus:border-accent focus:outline-none disabled:opacity-50"
+                        >
+                          {!actuel && <option value="">— choisir —</option>}
+                          {inconnu && <option value={actuel}>{actuel} (plus installé : repli automatique)</option>}
+                          {modeles.map((m) => (
+                            <option key={m.name} value={m.name}>{m.name} · {taille(m.size)}</option>
+                          ))}
+                        </select>
+                        <span className="w-5 text-success">
+                          {enregistrement === champ && <Loader2 className="w-4 h-4 animate-spin text-ink-faint" />}
+                          {enregistre === champ && <Check className="w-4 h-4" />}
+                        </span>
+                      </li>
+                    );
+                  })}
                 </ul>
-              </div>
-            </>
+              )}
+            </section>
           )}
+
+          <ProjectsFolderSettings />
+          <BriefingSettings />
+          <FeedLibrary />
         </main>
       </div>
     </div>

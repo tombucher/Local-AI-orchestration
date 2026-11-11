@@ -29,6 +29,23 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _modeles_par_defaut() -> dict:
+    """Réglages d'un nouveau compte : un modèle réellement installé partout.
+
+    Les valeurs par défaut des colonnes datent d'une autre époque (mistral 7B,
+    devstral) ; un compte neuf voyait quatre modèles « plus installés ».
+    """
+    from app.services.model_registry import resolve_model
+    modele = resolve_model(app_settings.OLLAMA_MODEL_CODE, "défaut")
+    return {
+        "ollama_model_code": modele,
+        "ollama_model_text": modele,
+        "ollama_model_ideation": modele,
+        "ollama_model_analysis": modele,
+        "ollama_model_task_generation": modele,
+    }
+
+
 @router.get("/ollama-models", response_model=List[OllamaModelInfo])
 async def list_ollama_models(
     current_user: User = Depends(get_current_user)
@@ -74,10 +91,7 @@ async def get_user_settings(
     # Si pas de paramètres, créer avec valeurs par défaut
     if not user_settings:
         logger.info(f"Creating default settings for user {current_user.id}")
-        user_settings = UserSettings(
-            user_id=current_user.id,
-            ollama_model_code=app_settings.OLLAMA_MODEL_CODE
-        )
+        user_settings = UserSettings(user_id=current_user.id, **_modeles_par_defaut())
         db.add(user_settings)
         await db.commit()
         await db.refresh(user_settings)
@@ -299,7 +313,7 @@ async def _own_settings(db: AsyncSession, user: User) -> UserSettings:
     user_settings = (await db.execute(
         select(UserSettings).where(UserSettings.user_id == user.id))).scalars().first()
     if not user_settings:
-        user_settings = UserSettings(user_id=user.id, ollama_model_code=app_settings.OLLAMA_MODEL_CODE)
+        user_settings = UserSettings(user_id=user.id, **_modeles_par_defaut())
         db.add(user_settings)
         await db.flush()
     return user_settings

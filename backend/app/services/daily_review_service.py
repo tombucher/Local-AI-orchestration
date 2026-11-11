@@ -179,6 +179,11 @@ class DailyReviewService:
             ps = status_by_id.get(project.id)
             if not ps or ps.total_tasks == 0:
                 continue
+            # Un projet qui a déjà des tâches en attente n'a pas besoin d'idées
+            # neuves : il a besoin qu'on les lance. Et chaque analyse coûte
+            # plusieurs minutes de modèle.
+            if ps.ready_task_titles:
+                continue
 
             # Dernière activité = dernière création ou complétion de tâche
             stmt = select(func.max(func.coalesce(Task.completed_at, Task.created_at))).where(
@@ -426,10 +431,12 @@ RÉPONDS UNIQUEMENT EN JSON VALIDE (sans markdown) :
 }}"""
 
         try:
-            # Modèle préféré de l'utilisateur (analysis), appel async (thread)
-            analyzer = ProjectAnalyzer(self.db, user_id=user_id)
-            await analyzer._load_user_model_preference(usage="analysis")
-            response = await self.text_generator._generate_text_async(prompt, model=analyzer.model)
+            # Modèle rapide (OLLAMA_MODEL_PROMPT) : trois phrases et trois actions ne
+            # justifient pas le gros modèle, qui faisait attendre le briefing plusieurs
+            # minutes à l'ouverture de l'outil.
+            response = await self.text_generator._generate_text_async(
+                prompt, model=self.text_generator._FAST_FALLBACK_MODEL
+            )
 
             summary = ProjectAnalyzer._parse_json_lenient(response.strip())
 

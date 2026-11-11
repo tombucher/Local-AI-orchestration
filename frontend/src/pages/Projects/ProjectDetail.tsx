@@ -86,6 +86,17 @@ export const ProjectDetail = () => {
     }
   };
 
+  /** Lancer une tâche depuis le tableau : la file n'attend plus qu'on ouvre chaque page */
+  const lancerTache = async (task: Task) => {
+    try {
+      await tasksService.generateTask(task.id);
+      toast.success(`« ${task.title} » lancée — la génération tourne en arrière-plan`);
+      await loadTasks(task.project_id);
+    } catch {
+      // l'intercepteur affiche déjà l'erreur
+    }
+  };
+
   const loadCriticalPath = async (projectId: number) => {
     try {
       const response = await api.get<CriticalPathData>(`/projects/${projectId}/critical-path`, { silentError: true });
@@ -269,7 +280,7 @@ export const ProjectDetail = () => {
                   </button>
                 </div>
               )}
-              <ProjectTasksBoard projectId={project.id} tasks={tasks} loading={tasksLoading} criticalPathMap={criticalPathMap} taskOrder={taskOrder} />
+              <ProjectTasksBoard projectId={project.id} tasks={tasks} loading={tasksLoading} criticalPathMap={criticalPathMap} taskOrder={taskOrder} onLaunch={lancerTache} />
             </>
           )}
 

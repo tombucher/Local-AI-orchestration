@@ -21,10 +21,10 @@ export const etatDe = (project: Pick<Project, 'status'>): EtatProjet => {
   }
 };
 
-/** « 15 novembre », « 1er décembre » à partir de « 2026-11-15 » */
+/** « 15 novembre », « 1er décembre » à partir de « 2026-11-15 » (ou d'une date-heure ISO) */
 export const dateLisible = (iso?: string | null) => {
   if (!iso) return '';
-  const date = new Date(`${iso}T12:00:00`);
+  const date = new Date(`${iso.slice(0, 10)}T12:00:00`);
   const mois = date.toLocaleDateString('fr-FR', { month: 'long' });
   const jour = date.getDate();
   return `${jour === 1 ? '1er' : jour} ${mois}`;

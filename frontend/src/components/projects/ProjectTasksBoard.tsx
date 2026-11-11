@@ -5,7 +5,7 @@
 
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronDown, ChevronUp, Flame, Lock, Square } from 'lucide-react';
+import { ChevronDown, ChevronUp, Flame, Loader2, Lock, Play, Square } from 'lucide-react';
 import type { Task } from '../../types/task.types';
 import { TaskStatus } from '../../types/task.types';
 import type { CriticalPathTaskData } from '../../types/critical-path.types';
@@ -21,6 +21,8 @@ interface ProjectTasksBoardProps {
   criticalPathMap: Map<number, CriticalPathTaskData>;
   /** Ordre d'exécution conseillé (tri topologique du chemin critique) : id → rang */
   taskOrder?: Map<number, number>;
+  /** Lancer la génération d'une tâche créée ou en file, sans ouvrir sa page */
+  onLaunch?: (task: Task) => Promise<void>;
 }
 
 /** Sépare la description de la checklist « **Checklist:** - [ ] … » générée par l'analyse IA */
@@ -38,10 +40,23 @@ const extractSubtasks = (description: string): { description: string; subtasks: 
 const hoursFromUnits = (units: number) => Math.round(units / 3600);
 
 const TERMINEES = new Set<string>([TaskStatus.COMPLETED, TaskStatus.CANCELLED]);
+const LANCABLES = new Set<string>([TaskStatus.CREATED, TaskStatus.READY]);
 
-export const ProjectTasksBoard = ({ projectId, tasks, loading, criticalPathMap, taskOrder }: ProjectTasksBoardProps) => {
+export const ProjectTasksBoard = ({ projectId, tasks, loading, criticalPathMap, taskOrder, onLaunch }: ProjectTasksBoardProps) => {
   const navigate = useNavigate();
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [lancement, setLancement] = useState<number | null>(null);
+
+  const lancer = async (task: Task, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!onLaunch) return;
+    setLancement(task.id);
+    try {
+      await onLaunch(task);
+    } finally {
+      setLancement(null);
+    }
+  };
 
   // Ordre conseillé : le backend fournit un tri topologique (chemin critique) qui
   // respecte les dépendances. Sans lui, la liste arrivait dans l'ordre de création,
@@ -159,6 +174,17 @@ export const ProjectTasksBoard = ({ projectId, tasks, loading, criticalPathMap, 
                   <StatusBadge status={task.status} size="sm" />
                   {task.estimated_duration && (
                     <span className="text-xs text-ink-faint figures">~{hoursFromUnits(task.estimated_duration)} h</span>
+                  )}
+                  {onLaunch && LANCABLES.has(task.status as string) && attente.length === 0 && (
+                    <button
+                      onClick={(e) => lancer(task, e)}
+                      disabled={lancement !== null}
+                      title="Générer maintenant avec le modèle local"
+                      className="ml-auto shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide border border-accent text-accent hover:bg-accent hover:text-white disabled:opacity-40 transition-colors"
+                    >
+                      {lancement === task.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                      Lancer
+                    </button>
                   )}
                 </div>
 

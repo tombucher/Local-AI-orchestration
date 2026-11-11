@@ -184,7 +184,9 @@ async def _update_task_dependencies(
 @router.get("/", response_model=TaskList)
 async def list_tasks(
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=100),
+    # Le journal lit toutes les tâches vivantes d'un coup pour dire ce qui attend ;
+    # une centaine de tâches tient sans peine dans une réponse
+    limit: int = Query(50, ge=1, le=500),
     project_id: Optional[int] = None,
     status: Optional[TaskStatus] = None,
     priority: Optional[TaskPriority] = None,
@@ -249,12 +251,25 @@ async def list_tasks(
     result = await db.execute(query)
     rows = result.unique().all()
 
+    # Dépendances de toutes les tâches de la page en une requête : sans elles,
+    # le journal proposait de lancer une tâche dont la précédente n'est pas faite
+    dependances: dict[int, list[int]] = {}
+    ids = [task.id for task, _ in rows]
+    if ids:
+        deps_rows = await db.execute(
+            select(task_dependencies.c.task_id, task_dependencies.c.depends_on_id)
+            .where(task_dependencies.c.task_id.in_(ids))
+        )
+        for task_id, depends_on_id in deps_rows.all():
+            dependances.setdefault(task_id, []).append(depends_on_id)
+
     # Construire les TaskResponse avec project_name
     tasks = []
     for task, project_name in rows:
         task_dict = {
             **task.__dict__,
-            'project_name': project_name
+            'project_name': project_name,
+            'dependencies': dependances.get(task.id, []),
         }
         tasks.append(TaskResponse(**task_dict))
 

@@ -7,7 +7,7 @@
 import { Home, FolderKanban, CheckSquare, Settings } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 
-const navItems = [
+export const navItems = [
   { name: 'Le journal', href: '/dashboard', icon: Home },
   { name: 'Projets', href: '/projects', icon: FolderKanban },
   { name: 'Tâches', href: '/tasks', icon: CheckSquare },
