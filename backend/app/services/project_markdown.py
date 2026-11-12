@@ -337,6 +337,32 @@ def ecrire_reponse(texte: str, titre: str, reponse: str) -> Optional[str]:
     return nouveau
 
 
+def ecrire_description(texte: str, description: str) -> Optional[str]:
+    """Remplace le texte libre entre « # Titre » et la première tâche. None sans titre."""
+    lignes = texte.replace("\r\n", "\n").split("\n")
+    debut, fin, dans_code = None, len(lignes), False
+    for i, ligne in enumerate(lignes):
+        if ligne.lstrip().startswith("```"):
+            dans_code = not dans_code
+        if dans_code:
+            continue
+        if debut is None:
+            if _H1.match(ligne):
+                debut = i
+            elif _H2.match(ligne):
+                return None  # une tâche avant le titre : pas de zone de description
+            continue
+        if _H2.match(ligne):
+            fin = i
+            break
+    if debut is None:
+        return None
+    corps = _abaisser_titres(description.strip()).split("\n") if description.strip() else []
+    suite = lignes[fin:]
+    nouveau = "\n".join(lignes[:debut + 1] + [""] + corps + ([""] if corps and suite else []) + suite)
+    return nouveau if nouveau.endswith("\n") else nouveau + "\n"
+
+
 def ecrire_mots_cles(texte: str, titre: str, mots: List[str]) -> Optional[str]:
     """Remplace « mots-clés: … » dans la ligne de méta de la tâche. None si introuvable."""
     lignes = texte.replace("\r\n", "\n").split("\n")

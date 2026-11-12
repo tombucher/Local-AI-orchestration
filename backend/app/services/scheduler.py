@@ -153,7 +153,9 @@ async def check_veille_recurrence_job() -> None:
                 # Créer la nouvelle occurrence
                 new_task = Task(
                     project_id=topic.project_id,
-                    title=last_task.title if last_task else f"Veille — {topic.name}",
+                    # Un titre par date : copier celui de la précédente faisait
+                    # renuméroter la fiche à chaque export (« (3) (2) »)
+                    title=f"Veille — {topic.name} · {now:%d/%m/%Y}"[:255],
                     description=last_task.description if last_task else topic.description,
                     task_type=TaskType.VEILLE,
                     status=TaskStatus.READY,

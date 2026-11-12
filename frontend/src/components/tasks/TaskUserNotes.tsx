@@ -4,22 +4,22 @@
  * Une tâche « préciser le périmètre » pose des questions ; l'utilisateur en a
  * les réponses et n'avait nulle part où les écrire. Ici, la réponse est lue par
  * les tâches qui dépendent de celle-ci, par toutes les veilles du projet (via
- * le carnet de projet), écrite dans la fiche .md sous la tâche, et peut faire
- * évoluer les mots-clés des veilles tout de suite.
+ * le carnet de projet), et écrite dans la fiche .md sous la tâche.
  *
- * Le panneau « Veilles du projet » montre l'état réel des sujets (mots-clés,
- * prochaine occurrence, dernier affinage) : sans lui, un clic sur « Mettre à
- * jour la veille » ne laissait qu'un toast de neuf secondes, et l'utilisateur
- * recliquait en croyant que rien ne s'était passé.
+ * « Reporter dans le projet » va plus loin : la description du projet est
+ * réécrite pour intégrer la réponse (ce qui y était « à préciser » l'est), les
+ * mots-clés des veilles évoluent, et la fiche .md reçoit les deux. Le panneau
+ * montre l'état réel : sans lui, un clic ne laissait qu'un toast de neuf
+ * secondes, et l'utilisateur recliquait en croyant que rien ne s'était passé.
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { MessageSquare, Radar, Save } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { FileText, MessageSquare, Radar, Save } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { Task } from '../../types/task.types';
 import { tasksService } from '../../services/tasks';
 import { api } from '../../services/api';
-import { isVeilleTask } from './taskTypeUtils';
 
 interface TaskUserNotesProps {
   task: Task;
@@ -35,6 +35,12 @@ interface SujetDeVeille {
   scan_frequency: string;
   next_scan: string | null;
   last_refinement: { date?: string; source_task_id?: number; user_notes?: string } | null;
+}
+
+interface FicheProjet {
+  name: string;
+  description: string | null;
+  description_history?: { date?: string; source_task_id?: number }[] | null;
 }
 
 const FREQUENCES: Record<string, string> = { daily: 'quotidienne', weekly: 'hebdomadaire', monthly: 'mensuelle', once: 'ponctuelle' };
@@ -53,20 +59,25 @@ const prochaine = (iso: string | null) => {
 export const TaskUserNotes = ({ task, onSaved }: TaskUserNotesProps) => {
   const [notes, setNotes] = useState(task.user_notes ?? '');
   const [enregistre, setEnregistre] = useState(task.user_notes ?? '');
-  const [occupe, setOccupe] = useState<'save' | 'veille' | null>(null);
+  const [occupe, setOccupe] = useState<'save' | 'projet' | null>(null);
   const [sujets, setSujets] = useState<SujetDeVeille[] | null>(null);
+  const [projet, setProjet] = useState<FicheProjet | null>(null);
   const modifie = notes !== enregistre;
 
-  const chargerSujets = useCallback(async () => {
+  const charger = useCallback(async () => {
     try {
-      const r = await api.get<SujetDeVeille[]>(`/projects/${task.project_id}/veille-topics`, { silentError: true });
-      setSujets(r.data.filter((s) => s.enabled));
+      const [p, s] = await Promise.all([
+        api.get<FicheProjet>(`/projects/${task.project_id}`, { silentError: true }),
+        api.get<SujetDeVeille[]>(`/projects/${task.project_id}/veille-topics`, { silentError: true }),
+      ]);
+      setProjet(p.data);
+      setSujets(s.data.filter((x) => x.enabled));
     } catch {
-      setSujets([]);
+      setSujets((prev) => prev ?? []);
     }
   }, [task.project_id]);
 
-  useEffect(() => { chargerSujets(); }, [chargerSujets]);
+  useEffect(() => { charger(); }, [charger]);
 
   const enregistrer = async () => {
     setOccupe('save');
@@ -82,22 +93,27 @@ export const TaskUserNotes = ({ task, onSaved }: TaskUserNotesProps) => {
     }
   };
 
-  const versLaVeille = async () => {
-    setOccupe('veille');
+  const reporter = async () => {
+    setOccupe('projet');
     try {
       if (modifie) {
         await tasksService.updateTask(task.id, { user_notes: notes });
         setEnregistre(notes);
       }
-      const { topics } = await tasksService.applyNotesToVeille(task.id);
-      if (topics.length === 0) {
-        toast('Ce projet n\'a pas de veille automatique.', { icon: 'ℹ️' });
-      } else if (topics.every((t) => t.unchanged)) {
-        toast('Cette réponse est déjà appliquée : rien à changer.', { icon: '✓' });
+      const { topics, description } = await tasksService.applyNotesToProject(task.id);
+      const veilleChangee = topics.some((t) => !t.unchanged);
+      if (description.unchanged && !veilleChangee) {
+        toast('Cette réponse est déjà reportée dans le projet : rien à changer.', { icon: '✓' });
       } else {
-        toast.success('Veille mise à jour : mots-clés écrits dans la fiche, prochaine occurrence dans le quart d\'heure.', { duration: 7000 });
+        const quoi = [
+          !description.unchanged && (description.mode === 'ajout'
+            ? 'réponse ajoutée à la description (le modèle n\'a pas répondu)'
+            : 'description réécrite'),
+          veilleChangee && 'mots-clés de veille mis à jour, prochaine occurrence dans le quart d\'heure',
+        ].filter(Boolean).join(' · ');
+        toast.success(`Projet et fiche mis à jour : ${quoi}.`, { duration: 8000 });
       }
-      await chargerSujets();
+      await charger();
     } catch {
       // déjà toastée
     } finally {
@@ -106,6 +122,8 @@ export const TaskUserNotes = ({ task, onSaved }: TaskUserNotesProps) => {
   };
 
   const aDesSujets = (sujets?.length ?? 0) > 0;
+  const derniereReecriture = projet?.description_history?.[projet.description_history.length - 1];
+  const descriptionDepuisIci = derniereReecriture?.source_task_id === task.id;
 
   return (
     <div className="bg-paper-card shadow-card border border-ink-line border-l-2 border-l-accent p-6">
@@ -113,8 +131,9 @@ export const TaskUserNotes = ({ task, onSaved }: TaskUserNotesProps) => {
         <MessageSquare className="w-3.5 h-3.5" /> Ta réponse
       </p>
       <p className="text-sm text-ink-soft mb-3">
-        Réponds aux questions posées, complète, corrige. Écrite dans la fiche sous cette tâche, lue par les
-        tâches qui en dépendent{aDesSujets ? ' et par les veilles du projet' : ''}.
+        Réponds aux questions posées, complète, corrige. Enregistrée dans la fiche sous cette tâche et lue
+        par les tâches qui en dépendent. <em>Reporter dans le projet</em> réécrit aussi la description du
+        projet{aDesSujets ? ' et les mots-clés de ses veilles' : ''}.
       </p>
       <textarea
         value={notes}
@@ -132,19 +151,32 @@ export const TaskUserNotes = ({ task, onSaved }: TaskUserNotesProps) => {
           <Save className="w-4 h-4" />
           {occupe === 'save' ? 'Enregistrement…' : 'Enregistrer'}
         </button>
-        {!isVeilleTask(task.task_type) && aDesSujets && (
-          <button
-            onClick={versLaVeille}
-            disabled={!notes.trim() || occupe !== null}
-            title="Traduit ta réponse en mots-clés pour les veilles du projet et relance la prochaine occurrence"
-            className="inline-flex items-center gap-2 px-4 py-2 border border-accent text-accent text-sm font-medium hover:bg-accent hover:text-white disabled:opacity-40 transition-colors"
-          >
-            <Radar className="w-4 h-4" />
-            {occupe === 'veille' ? 'Le modèle relit ta réponse…' : 'Mettre à jour la veille du projet'}
-          </button>
-        )}
+        <button
+          onClick={reporter}
+          disabled={!notes.trim() || occupe !== null}
+          title="Réécrit la description du projet avec ta réponse, fait évoluer les mots-clés de ses veilles, et écrit le tout dans la fiche .md"
+          className="inline-flex items-center gap-2 px-4 py-2 border border-accent text-accent text-sm font-medium hover:bg-accent hover:text-white disabled:opacity-40 transition-colors"
+        >
+          <FileText className="w-4 h-4" />
+          {occupe === 'projet' ? 'Le modèle relit ta réponse…' : 'Reporter dans le projet'}
+        </button>
         {enregistre && !modifie && <span className="text-xs text-ink-faint">Enregistrée</span>}
       </div>
+
+      {projet && (
+        <div className="mt-5 pt-4 border-t border-ink-line/60">
+          <p className="kicker flex items-center gap-1.5">
+            <FileText className="w-3.5 h-3.5" /> Description du projet
+            {descriptionDepuisIci && <span className="normal-case tracking-normal text-accent"> · réécrite à partir de cette réponse</span>}
+          </p>
+          <p className="mt-1 text-sm text-ink-soft whitespace-pre-line line-clamp-6">
+            {projet.description?.trim() || 'Pas encore de description.'}
+          </p>
+          <Link to={`/projects/${task.project_id}`} className="mt-1 inline-block text-xs text-accent hover:underline">
+            Voir le projet
+          </Link>
+        </div>
+      )}
 
       {aDesSujets && (
         <div className="mt-5 pt-4 border-t border-ink-line/60 space-y-3">

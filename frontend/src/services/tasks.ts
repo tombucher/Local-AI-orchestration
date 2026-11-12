@@ -18,6 +18,22 @@ export interface VeilleTopicUpdate {
   unchanged?: boolean;
 }
 
+/** Description du projet réécrite à partir d'une réponse */
+export interface DescriptionUpdate {
+  description: string;
+  previous: string | null;
+  /** Même réponse déjà appliquée, ou rien à changer */
+  unchanged: boolean;
+  /** « modele » : réécrite par le modèle ; « ajout » : réponse ajoutée telle quelle, datée */
+  mode?: 'modele' | 'ajout' | null;
+}
+
+/** Ce qu'une réponse a fait évoluer dans le projet */
+export interface ProjectEvolution {
+  topics: VeilleTopicUpdate[];
+  description: DescriptionUpdate;
+}
+
 export const tasksService = {
   /**
    * Récupérer toutes les tâches avec filtres optionnels
@@ -180,6 +196,12 @@ export const tasksService = {
   /** La réponse écrite sur la tâche fait évoluer les veilles du projet */
   applyNotesToVeille: async (id: number): Promise<{ topics: VeilleTopicUpdate[] }> => {
     const response = await api.post<{ topics: VeilleTopicUpdate[] }>(`/tasks/${id}/notes-to-veille`);
+    return response.data;
+  },
+
+  /** La réponse fait évoluer le projet entier : description, veilles, fiche .md */
+  applyNotesToProject: async (id: number): Promise<ProjectEvolution> => {
+    const response = await api.post<ProjectEvolution>(`/tasks/${id}/notes-to-project`);
     return response.data;
   },
 

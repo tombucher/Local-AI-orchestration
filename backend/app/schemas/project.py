@@ -107,6 +107,10 @@ class ProjectResponse(ProjectBase):
     # Ordre de priorité (1 = le plus important) et reprise d'un projet en pause
     priority_rank: Optional[int] = None
     resume_on: Optional[date] = None
+    # Descriptions précédentes quand une réponse a réécrit la description
+    # ({date, source_task_id, user_notes, previous, mode}) : la page de la tâche
+    # dit ainsi « réécrite à partir de cette réponse »
+    description_history: Optional[List[dict]] = None
     # Statistiques optionnelles (pour la liste de projets)
     tasks_total: Optional[int] = None
     tasks_completed: Optional[int] = None

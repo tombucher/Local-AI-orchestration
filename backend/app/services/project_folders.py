@@ -42,7 +42,8 @@ from app.models.veille_topic import VeilleScope, VeilleTopic
 from app.services.maturity import MaturityService
 from app.services.project_export import collect_project_files, safe_path
 from app.services.project_markdown import (
-    TacheAEcrire, cle_titre, cocher_tache, ecrire_mots_cles, ecrire_projet, ecrire_reponse, lire_projet,
+    TacheAEcrire, cle_titre, cocher_tache, ecrire_description, ecrire_mots_cles, ecrire_projet,
+    ecrire_reponse, lire_projet,
 )
 
 logger = logging.getLogger(__name__)
@@ -217,6 +218,11 @@ class SyncReport:
 
 # ------------------------------------------------------- fiche → outil --
 
+def est_occurrence(t: Task) -> bool:
+    """Tâche créée automatiquement par la récurrence d'une veille."""
+    return bool((t.task_metadata or {}).get("occurrence_from_topic"))
+
+
 def _md_tasks(tasks: List[Task]) -> Dict[str, Task]:
     return {(t.task_metadata or {}).get("md_key"): t for t in tasks
             if (t.task_metadata or {}).get("md_key") and t.status != TaskStatus.CANCELLED}
@@ -376,8 +382,9 @@ async def reporter_dans_la_fiche(
     db: AsyncSession, project: Project, *,
     reponses: Optional[Dict[str, Optional[str]]] = None,
     mots_cles: Optional[Dict[str, List[str]]] = None,
+    description: Optional[str] = None,
 ) -> bool:
-    """Retouche chirurgicale de la fiche : « Réponse : » et « mots-clés: » de tâches.
+    """Retouche chirurgicale de la fiche : « Réponse : », « mots-clés: », description.
 
     Comme pour les cases cochées : on ne réécrit pas toute la fiche (elle peut
     avoir été retouchée à la main), on ne touche que les lignes concernées,
@@ -400,6 +407,10 @@ async def reporter_dans_la_fiche(
             nouveau = resultat
     for titre, mots in (mots_cles or {}).items():
         resultat = ecrire_mots_cles(nouveau, titre, mots)
+        if resultat is not None:
+            nouveau = resultat
+    if description is not None:
+        resultat = ecrire_description(nouveau, description)
         if resultat is not None:
             nouveau = resultat
     if nouveau == texte:
@@ -566,9 +577,14 @@ async def write_project_markdown(db: AsyncSession, user_id: int, project: Projec
     if racine is None and not project.source_path:
         raise SansDossier("Choisis d'abord un dossier de projets dans Paramètres.")
 
+    # Les occurrences d'une veille (créées par le planificateur) restent hors
+    # de la fiche : celle-ci décrit le plan, la ligne « type: veille » y suffit,
+    # et leurs résultats sont dans Production/. Les y écrire empilait des blocs
+    # « Veille — … (3) (2) » à chaque occurrence.
     taches = [t for t in (await db.execute(
         select(Task).where(Task.project_id == project.id).order_by(Task.id)
-    )).unique().scalars().all() if t.status != TaskStatus.CANCELLED]
+    )).unique().scalars().all()
+        if t.status != TaskStatus.CANCELLED and not est_occurrence(t)]
 
     # Titres uniques : c'est par eux que fiche et tâches se retrouvent
     vus: Dict[str, int] = {}

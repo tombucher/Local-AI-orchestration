@@ -1261,22 +1261,58 @@ async def notes_to_veille(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="Écris d'abord ta réponse sur la tâche")
     topics = await appliquer_notes_aux_veilles(db, task)
-
-    # Les nouveaux mots-clés s'écrivent dans la fiche, sur chaque tâche de veille du sujet
-    from app.services.project_folders import reporter_dans_la_fiche
     projet = await db.get(Project, task.project_id)
-    if projet is not None and projet.source_path and topics:
-        par_sujet = {t["topic_id"]: t["keywords"] for t in topics if not t.get("unchanged")}
-        if par_sujet:
-            taches_veille = (await db.execute(select(Task).where(
-                Task.veille_topic_id.in_(list(par_sujet)), Task.status != TaskStatus.CANCELLED))).unique().scalars().all()
-            try:
-                await reporter_dans_la_fiche(
-                    db, projet, mots_cles={t.title: par_sujet[t.veille_topic_id] for t in taches_veille})
-            except Exception as e:
-                logging.getLogger(__name__).warning(f"Mots-clés non reportés dans la fiche : {e}")
+    await _ecrire_evolution_dans_la_fiche(db, projet, topics)
     await db.commit()
     return {"topics": topics}
+
+
+async def _ecrire_evolution_dans_la_fiche(db: AsyncSession, projet: Optional[Project], topics: list,
+                                          description: Optional[str] = None) -> None:
+    """Mots-clés des veilles changées et description réécrite → fiche .md du projet."""
+    from app.services.project_folders import reporter_dans_la_fiche
+    if projet is None or not projet.source_path:
+        return
+    par_sujet = {t["topic_id"]: t["keywords"] for t in (topics or []) if not t.get("unchanged")}
+    mots_cles = {}
+    if par_sujet:
+        taches_veille = (await db.execute(select(Task).where(
+            Task.veille_topic_id.in_(list(par_sujet)), Task.status != TaskStatus.CANCELLED))).unique().scalars().all()
+        mots_cles = {t.title: par_sujet[t.veille_topic_id] for t in taches_veille}
+    if not mots_cles and description is None:
+        return
+    try:
+        await reporter_dans_la_fiche(db, projet, mots_cles=mots_cles, description=description)
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Évolution non reportée dans la fiche : {e}")
+
+
+@router.post("/{task_id}/notes-to-project")
+async def notes_to_project(
+    task_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """La réponse écrite sur cette tâche fait évoluer le projet entier.
+
+    Sa description (ce qui y était « à préciser » l'est), ses veilles
+    (mots-clés, prochaine occurrence avancée), et sa fiche .md où les deux
+    sont écrits. Idempotent : la même réponse n'est pas réappliquée.
+    """
+    from app.services.reponse_vers_projet import appliquer_reponse_au_projet
+    from app.services.veille_update import appliquer_notes_aux_veilles
+
+    task = await _get_user_task_model(task_id, current_user.id, db)
+    if not (task.user_notes or '').strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Écris d'abord ta réponse sur la tâche")
+    projet = await db.get(Project, task.project_id)
+    topics = await appliquer_notes_aux_veilles(db, task)
+    description = await appliquer_reponse_au_projet(db, projet, task)
+    await _ecrire_evolution_dans_la_fiche(
+        db, projet, topics, description=None if description["unchanged"] else description["description"])
+    await db.commit()
+    return {"topics": topics, "description": description}
 
 
 @router.put("/{task_id}/veille-refine")

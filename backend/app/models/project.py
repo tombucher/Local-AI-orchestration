@@ -36,6 +36,9 @@ class Project(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
+    # Versions précédentes de la description quand une réponse l'a réécrite :
+    # [{date, source_task_id, user_notes, previous, mode}], dix au plus
+    description_history = Column(JSON, nullable=True)
     type = Column(SQLEnum(ProjectType), nullable=False, index=True)
     status = Column(SQLEnum(ProjectStatus), default=ProjectStatus.IDEATION, nullable=False, index=True)
     
