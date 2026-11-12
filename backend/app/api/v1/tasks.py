@@ -490,6 +490,17 @@ async def update_task(
     await db.commit()
     await db.refresh(task)
 
+    # La réponse s'écrit aussi dans la fiche .md du projet, sous la tâche
+    if 'user_notes' in update_data:
+        from app.services.project_folders import reporter_dans_la_fiche
+        projet = await db.get(Project, task.project_id)
+        if projet is not None and projet.source_path:
+            try:
+                if await reporter_dans_la_fiche(db, projet, reponses={task.title: task.user_notes}):
+                    await db.commit()
+            except Exception as e:  # la fiche n'est pas un prérequis pour répondre
+                logging.getLogger(__name__).warning(f"Réponse non reportée dans la fiche : {e}")
+
     # Mettre à jour le score de maturité du projet
     maturity_service = MaturityService()
     await maturity_service.update_project_maturity_score(task.project_id, db)
@@ -1250,6 +1261,20 @@ async def notes_to_veille(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="Écris d'abord ta réponse sur la tâche")
     topics = await appliquer_notes_aux_veilles(db, task)
+
+    # Les nouveaux mots-clés s'écrivent dans la fiche, sur chaque tâche de veille du sujet
+    from app.services.project_folders import reporter_dans_la_fiche
+    projet = await db.get(Project, task.project_id)
+    if projet is not None and projet.source_path and topics:
+        par_sujet = {t["topic_id"]: t["keywords"] for t in topics if not t.get("unchanged")}
+        if par_sujet:
+            taches_veille = (await db.execute(select(Task).where(
+                Task.veille_topic_id.in_(list(par_sujet)), Task.status != TaskStatus.CANCELLED))).unique().scalars().all()
+            try:
+                await reporter_dans_la_fiche(
+                    db, projet, mots_cles={t.title: par_sujet[t.veille_topic_id] for t in taches_veille})
+            except Exception as e:
+                logging.getLogger(__name__).warning(f"Mots-clés non reportés dans la fiche : {e}")
     await db.commit()
     return {"topics": topics}
 

@@ -65,6 +65,9 @@ _H1 = re.compile(r"^#\s+(.+?)\s*#*\s*$")
 _H2 = re.compile(r"^##\s+(?:\[([ xX])\]\s+)?(.+?)\s*#*\s*$")
 _SEPARATEUR_META = re.compile(r"\s*[·|]\s*")
 _META = re.compile(r"^\s*([\w\- ]+?)\s*:\s*(.+?)\s*$")
+# « Réponse : … » sous une tâche : ce que l'utilisateur a répondu au résultat
+# (questions posées par le modèle, précisions). Se lit jusqu'à la ligne vide.
+_REPONSE = re.compile(r"^\s*>?\s*R[ée]ponse\s*:\s*(.*)$", re.I)
 
 
 def sans_accents(texte: str) -> str:
@@ -92,6 +95,7 @@ class TacheMd:
     apres: List[str] = field(default_factory=list)
     priorite: TaskPriority = TaskPriority.P2
     description: str = ""
+    reponse: str = ""
     erreurs: List[str] = field(default_factory=list)
 
     @property
@@ -203,7 +207,8 @@ def lire_projet(texte: str, aujourd_hui: Optional[date] = None) -> ProjetMd:
 
     def clore():
         if courante is not None:
-            courante.description = "\n".join(corps).strip()
+            reste, courante.reponse = separer_reponse(corps)
+            courante.description = "\n".join(reste).strip()
             if not courante.type_explicite:
                 courante.task_type, extra = deviner_type(courante.titre, courante.description)
                 courante.metadata = {**extra, **courante.metadata}
@@ -261,6 +266,104 @@ def lire_projet(texte: str, aujourd_hui: Optional[date] = None) -> ProjetMd:
     for t in taches:
         projet.erreurs += [f"{t.titre} : {e}" for e in t.erreurs]
     return projet
+
+
+def separer_reponse(corps: List[str]) -> Tuple[List[str], str]:
+    """Isole le bloc « Réponse : … » (jusqu'à la ligne vide) du reste du corps."""
+    dans_code = False
+    for i, ligne in enumerate(corps):
+        if ligne.lstrip().startswith("```"):
+            dans_code = not dans_code
+        if dans_code:
+            continue
+        m = _REPONSE.match(ligne)
+        if not m:
+            continue
+        fin = i + 1
+        while fin < len(corps) and corps[fin].strip():
+            fin += 1
+        lignes = [m[1].strip()] + [re.sub(r"^\s*>\s?", "", l).rstrip() for l in corps[i + 1:fin]]
+        return corps[:i] + corps[fin:], "\n".join(l for l in lignes if l is not None).strip()
+    return corps, ""
+
+
+def _lignes_reponse(reponse: str) -> List[str]:
+    """« Réponse : … » sur une ou plusieurs lignes, sans ligne vide (elle clôt le bloc)."""
+    lignes = [l.rstrip() for l in reponse.strip().split("\n") if l.strip()]
+    if not lignes:
+        return []
+    return [f"Réponse : {lignes[0]}"] + lignes[1:]
+
+
+def _bloc_de_tache(lignes: List[str], titre: str) -> Optional[Tuple[int, int]]:
+    """Indices (début, fin exclue) du bloc d'une tâche : son ## jusqu'au ## suivant."""
+    cible = cle_titre(titre)
+    debut, dans_code = None, False
+    for i, ligne in enumerate(lignes):
+        if ligne.lstrip().startswith("```"):
+            dans_code = not dans_code
+        if dans_code:
+            continue
+        h2 = _H2.match(ligne.rstrip("\r"))
+        if not h2:
+            continue
+        if debut is not None:
+            return debut, i
+        if cle_titre(h2[2]) == cible:
+            debut = i
+    return (debut, len(lignes)) if debut is not None else None
+
+
+def ecrire_reponse(texte: str, titre: str, reponse: str) -> Optional[str]:
+    """Écrit (ou remplace, ou retire) le bloc « Réponse : » sous la tâche. None si introuvable."""
+    lignes = texte.replace("\r\n", "\n").split("\n")
+    bloc = _bloc_de_tache(lignes, titre)
+    if bloc is None:
+        return None
+    debut, fin = bloc
+    corps = lignes[debut + 1:fin]
+    reste, _ = separer_reponse(corps)
+    # Retirer les lignes vides de fin du corps, on remet la séparation nous-mêmes
+    while reste and not reste[-1].strip():
+        reste.pop()
+    nouvelles = _lignes_reponse(reponse)
+    corps_final = reste + ([""] + nouvelles if nouvelles else [])
+    suite = lignes[fin:]
+    if suite:  # une tâche suit : la séparer d'une ligne vide
+        corps_final.append("")
+    nouveau = "\n".join(lignes[:debut + 1] + corps_final + suite)
+    if not nouveau.endswith("\n"):
+        nouveau += "\n"
+    return nouveau
+
+
+def ecrire_mots_cles(texte: str, titre: str, mots: List[str]) -> Optional[str]:
+    """Remplace « mots-clés: … » dans la ligne de méta de la tâche. None si introuvable."""
+    lignes = texte.replace("\r\n", "\n").split("\n")
+    bloc = _bloc_de_tache(lignes, titre)
+    if bloc is None:
+        return None
+    debut, fin = bloc
+    valeur = ", ".join(m.strip() for m in mots if m and m.strip())
+    for i in range(debut + 1, fin):
+        if not lignes[i].strip():
+            continue
+        meta = _lire_meta(lignes[i])
+        if meta is None:  # pas de ligne de méta : on en crée une
+            lignes.insert(debut + 1, f"mots-clés: {valeur}")
+            break
+        morceaux = [m for m in _SEPARATEUR_META.split(lignes[i].strip()) if m]
+        morceaux = [m for m in morceaux if _cle_meta(_META.match(m)[1]) not in ("mots-cles", "motscles")]
+        if valeur:
+            # Après « type » si présent, pour garder l'ordre habituel
+            position = 1 if morceaux and _cle_meta(_META.match(morceaux[0])[1]) == "type" else len(morceaux)
+            morceaux.insert(position, f"mots-clés: {valeur}")
+        lignes[i] = " · ".join(morceaux)
+        break
+    else:
+        lignes.insert(debut + 1, f"mots-clés: {valeur}")
+    nouveau = "\n".join(lignes)
+    return nouveau if nouveau.endswith("\n") else nouveau + "\n"
 
 
 def cocher_tache(texte: str, titre: str) -> Optional[str]:
@@ -324,6 +427,7 @@ class TacheAEcrire:
     apres: List[str] = field(default_factory=list)
     priorite: TaskPriority = TaskPriority.P2
     mots_cles: List[str] = field(default_factory=list)
+    reponse: str = ""
 
 
 def _libelle_type(t: TacheAEcrire) -> Optional[str]:
@@ -369,5 +473,10 @@ def ecrire_projet(titre: str, description: Optional[str], taches: List[TacheAEcr
         corps = _abaisser_titres(t.description)
         if corps:
             morceaux.append(corps)
+        lignes_reponse = _lignes_reponse(t.reponse or "")
+        if lignes_reponse:
+            if corps:
+                morceaux.append("")
+            morceaux += lignes_reponse
         morceaux.append("")
     return "\n".join(morceaux).rstrip() + "\n"

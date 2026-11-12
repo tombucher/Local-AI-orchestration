@@ -95,7 +95,7 @@ def appliquer(topic: VeilleTopic, proposition: Dict[str, List[str]], notes: str,
     return {
         "topic_id": topic.id, "name": topic.name,
         "keywords": keywords, "excluded_keywords": excluded,
-        "added": ajoutes, "removed": retires, "excluded": exclus,
+        "added": ajoutes, "removed": retires, "excluded": exclus, "unchanged": False,
     }
 
 
@@ -107,6 +107,16 @@ async def appliquer_notes_aux_veilles(db: AsyncSession, task: Task) -> List[Dict
     )).scalars().all()
     resultats = []
     for topic in topics:
+        # Même réponse déjà appliquée depuis cette tâche : on ne refait pas
+        # travailler le modèle (chaque passage faisait dériver les mots-clés)
+        derniere = (topic.refinement_history or [None])[-1] or {}
+        if derniere.get("source_task_id") == task.id and (derniere.get("user_notes") or "").strip() == notes:
+            resultats.append({
+                "topic_id": topic.id, "name": topic.name,
+                "keywords": list(topic.keywords or []), "excluded_keywords": list(topic.excluded_keywords or []),
+                "added": [], "removed": [], "excluded": [], "unchanged": True,
+            })
+            continue
         try:
             proposition = await proposer_evolution(topic, notes, task.generated_code)
         except Exception as e:

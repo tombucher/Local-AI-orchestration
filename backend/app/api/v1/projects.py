@@ -865,6 +865,27 @@ async def start_project_chat(
     )
 
 
+@router.get("/{project_id}/veille-topics")
+async def list_veille_topics(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Les sujets de veille du projet : mots-clés actuels, prochaine occurrence, dernier affinage."""
+    await _own_project(db, project_id, current_user.id)
+    topics = (await db.execute(
+        select(VeilleTopic).where(VeilleTopic.project_id == project_id).order_by(VeilleTopic.id)
+    )).scalars().all()
+    return [{
+        "id": t.id, "name": t.name, "scope": t.scope.value, "enabled": t.enabled,
+        "keywords": list(t.keywords or []), "excluded_keywords": list(t.excluded_keywords or []),
+        "scan_frequency": t.scan_frequency,
+        "next_scan": t.next_scan.isoformat() if t.next_scan else None,
+        "last_scan": t.last_scan.isoformat() if t.last_scan else None,
+        "last_refinement": (t.refinement_history or [None])[-1],
+    } for t in topics]
+
+
 @router.get("/{project_id}/critical-path")
 async def get_critical_path(
     project_id: int,

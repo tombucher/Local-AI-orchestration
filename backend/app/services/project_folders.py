@@ -42,7 +42,7 @@ from app.models.veille_topic import VeilleScope, VeilleTopic
 from app.services.maturity import MaturityService
 from app.services.project_export import collect_project_files, safe_path
 from app.services.project_markdown import (
-    TacheAEcrire, cle_titre, cocher_tache, ecrire_projet, lire_projet,
+    TacheAEcrire, cle_titre, cocher_tache, ecrire_mots_cles, ecrire_projet, ecrire_reponse, lire_projet,
 )
 
 logger = logging.getLogger(__name__)
@@ -290,6 +290,14 @@ async def apply_markdown(
             meta["md_done"] = t.fait
             meta["md_checked"] = meta.get("md_checked") or t.fait
             tache.task_metadata = meta
+            # Mots-clés retouchés à la main dans la fiche → le sujet de veille suit
+            if tache.veille_topic_id and t.metadata.get("keywords"):
+                sujet = await db.get(VeilleTopic, tache.veille_topic_id)
+                if sujet is not None and list(sujet.keywords or []) != t.metadata["keywords"]:
+                    sujet.keywords = t.metadata["keywords"]
+        # « Réponse : » écrite dans la fiche → réponse de la tâche
+        if t.reponse and (tache.user_notes or "").strip() != t.reponse:
+            tache.user_notes = t.reponse
         par_cle[t.cle] = tache
 
     # Retirée de la fiche : annulée si rien n'a encore été produit, sinon conservée
@@ -362,6 +370,43 @@ async def _cocher_les_terminees(db: AsyncSession, project: Project, fiche: Path,
     if modifie:
         _ecrire_atomique(fiche, texte)
         project.source_hash = _empreinte(texte)
+
+
+async def reporter_dans_la_fiche(
+    db: AsyncSession, project: Project, *,
+    reponses: Optional[Dict[str, Optional[str]]] = None,
+    mots_cles: Optional[Dict[str, List[str]]] = None,
+) -> bool:
+    """Retouche chirurgicale de la fiche : « Réponse : » et « mots-clés: » de tâches.
+
+    Comme pour les cases cochées : on ne réécrit pas toute la fiche (elle peut
+    avoir été retouchée à la main), on ne touche que les lignes concernées,
+    et l'empreinte est mise à jour pour que la synchronisation ne relise pas
+    notre propre écriture comme une modification de l'utilisateur.
+    """
+    if not project.source_path:
+        return False
+    try:
+        fiche = inside_mount(project.source_path)
+    except ValueError:
+        return False
+    if not fiche.is_file():
+        return False
+    texte = fiche.read_text(encoding="utf-8")
+    nouveau = texte
+    for titre, reponse in (reponses or {}).items():
+        resultat = ecrire_reponse(nouveau, titre, reponse or "")
+        if resultat is not None:
+            nouveau = resultat
+    for titre, mots in (mots_cles or {}).items():
+        resultat = ecrire_mots_cles(nouveau, titre, mots)
+        if resultat is not None:
+            nouveau = resultat
+    if nouveau == texte:
+        return False
+    _ecrire_atomique(fiche, nouveau)
+    project.source_hash = _empreinte(nouveau)
+    return True
 
 
 # --------------------------------------------------- outil → Production --
@@ -550,8 +595,10 @@ async def write_project_markdown(db: AsyncSession, user_id: int, project: Projec
     a_ecrire = []
     for t in taches:
         meta = t.task_metadata or {}
-        mots = meta.get("keywords") or (sujets[t.veille_topic_id].keywords
-                                        if t.veille_topic_id in sujets else []) or []
+        # Le sujet de veille fait foi : ses mots-clés évoluent (affinage, réponses),
+        # ceux copiés dans la tâche à sa création non
+        mots = (sujets[t.veille_topic_id].keywords if t.veille_topic_id in sujets else None) \
+            or meta.get("keywords") or []
         if t.veille_topic_id in sujets and "scope" not in meta:
             meta = {**meta, "scope": sujets[t.veille_topic_id].scope.value}
         a_ecrire.append(TacheAEcrire(
@@ -560,6 +607,7 @@ async def write_project_markdown(db: AsyncSession, user_id: int, project: Projec
             apres=deps.get(t.id, []), priorite=t.priority,
             mots_cles=[m for m in mots if isinstance(m, str)] if t.task_type in (
                 TaskType.VEILLE, TaskType.FUNDING_SEARCH) else [],
+            reponse=t.user_notes or "",
         ))
     texte = ecrire_projet(project.name, project.description, a_ecrire)
 

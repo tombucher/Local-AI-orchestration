@@ -37,7 +37,7 @@ La fiche est relue toutes les 30 s ; les fichiers générés sont rangés dans l
 
 **Pas de tâches ?** Dans un projet, *Discuter avec l'IA* : elle connaît la fiche, pose des questions, puis propose des tâches que tu choisis.
 
-**Le résultat pose des questions ?** Sous chaque tâche terminée, un bloc **Ta réponse** : ce que tu y écris est lu par les tâches qui dépendent de celle-ci, par le carnet du projet (donc par toutes ses veilles), et par la tâche elle-même si tu la relances. Le bouton *Mettre à jour la veille du projet* traduit ta réponse en mots-clés et avance la prochaine occurrence.
+**Le résultat pose des questions ?** Sous chaque tâche terminée, un bloc **Ta réponse** : ce que tu y écris est lu par les tâches qui dépendent de celle-ci, par le carnet du projet (donc par toutes ses veilles), et par la tâche elle-même si tu la relances. Ta réponse est aussi écrite dans la fiche `.md`, sous la tâche (`Réponse : …`), et tu peux l'y écrire directement. Le bouton *Mettre à jour la veille du projet* traduit ta réponse en mots-clés (écrits dans la fiche eux aussi) et avance la prochaine occurrence ; le panneau *Veilles du projet* montre l'état réel.
 
 **Les veilles** : une veille récurrente est un *sujet* (mots-clés, portée, fréquence). À chaque échéance, l'outil crée une **nouvelle tâche** « Veille — … » ; les occurrences passées restent, avec leurs résultats. *Affiner* sur une occurrence, ou *Ta réponse* sur n'importe quelle tâche du projet, change les suivantes.
 

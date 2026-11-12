@@ -14,6 +14,8 @@ export interface VeilleTopicUpdate {
   added: string[];
   removed: string[];
   excluded: string[];
+  /** Réponse identique déjà appliquée depuis cette tâche : le modèle n'a pas été rappelé */
+  unchanged?: boolean;
 }
 
 export const tasksService = {
