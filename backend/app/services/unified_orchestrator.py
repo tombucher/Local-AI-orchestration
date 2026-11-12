@@ -39,6 +39,7 @@ from app.services.project_memory import build_project_memory, score_against_memo
 from app.services.task_progress import clear_progress, set_progress, task_finished, task_started
 from app.services.project_documents import build_document_context
 from app.services.project_state import ACTIVE_STATUSES
+from app.services.livrables import parser_requetes, prompt_requetes, prompt_synthese
 from app.services.task_chain import brief_without_checklist, build_upstream_context, checklist_items
 from app.services.visual_scoring import score_images_with_vision, titre_illisible
 
@@ -865,19 +866,20 @@ RULES:
         )
 
         set_progress(task.id, "generation", f"Rédaction par {model}…")
-        document = await self.doc_generator.generate_document(
-            document_type=metadata.get('document_type') or task.title,
-            context={
-                'project_name': project.name,
-                'project_description': project.description,
-                'task_title': task.title,
-                'task_brief': brief_without_checklist(task.description),
-                'upstream': upstream,
-                'documents': documents.text,
-                **metadata.get('context', {})
-            },
-            sections=sections,
-            model=model
+        # Le brief : la consigne de l'analyse (llm_prompt) si elle existe, sinon la
+        # description. Les sections explicites (metadata) ou les sous-tâches font le plan.
+        consigne = (task.llm_prompt or '').strip()
+        brief = "\n\n".join(p for p in (f"{task.title}", brief_without_checklist(task.description), consigne) if p)
+        plan = [s['name'] for s in sections] if (metadata.get('sections') or len(items) >= 2) else []
+        document = await self.doc_generator.write_deliverable(
+            project_name=project.name,
+            project_description=project.description,
+            brief=brief,
+            plan=plan,
+            documents=documents.text,
+            upstream=upstream,
+            model=model,
+            feedback="\n\n".join(p for p in (task.validation_notes, task.user_notes) if p and p.strip()) or None,
         )
 
         if not (document or '').strip():
@@ -1032,31 +1034,87 @@ RULES:
         return dt
 
     async def _handle_research(self, task: Task) -> None:
-        """Génère un plan de recherche structuré via LLM"""
-        logger.info(f"🔬 Generating research plan for task {task.id}")
+        """Recherche réelle : requêtes web, pages lues, synthèse sourcée.
+
+        Avant, ce handler rendait un « plan de recherche » — la liste des sites
+        qu'il faudrait consulter. Un plan n'est pas un résultat : l'utilisateur
+        se retrouvait avec le travail entier à faire. SearXNG tourne à côté, le
+        module de veille sait lire une page : on cherche vraiment.
+        """
+        logger.info(f"🔬 Research for task {task.id}")
 
         project = await self._get_project(task.project_id)
         model = await self._get_text_model(project.user_id)
+        brief = "\n\n".join(p for p in (
+            task.title, brief_without_checklist(task.description), (task.llm_prompt or '').strip()) if p)
 
-        # Enrichit le llm_prompt avec des instructions spécifiques research
-        original_prompt = task.llm_prompt or task.description or task.title
+        set_progress(task.id, "context", "Lecture du contexte du projet…")
         upstream = await build_upstream_context(self.db, task)
-        task.llm_prompt = f"""{original_prompt}
-{chr(10) + upstream + chr(10) if upstream else ''}
+        documents = await build_document_context(
+            self.db, project.id,
+            objective=f"{task.title} {task.description or ''}", include_images=False,
+        )
 
-INSTRUCTIONS SUPPLÉMENTAIRES:
-Génère un plan de recherche structuré avec:
-1. Objectif de la recherche
-2. Sources à consulter (sites web, bases de données, APIs, etc.)
-3. Méthodologie étape par étape
-4. Points clés à explorer
-5. Critères d'évaluation des résultats
-6. Livrables attendus
-Sois concret et actionnable. Format Markdown."""
+        set_progress(task.id, "queries", "Choix des requêtes…")
+        requetes = await self._generate_research_queries(task, project)
+        sources = await self._collect_sources(task, requetes) if requetes else []
+        logger.info(f"🔬 Task {task.id}: {len(requetes)} requêtes, {len(sources)} sources lues")
 
-        result = await self.llm_client.generate_text(task, model_override=model)
-        task.llm_prompt = original_prompt  # Restaure le prompt original
-        task.generated_code = result if result and result.strip() else f"[Recherche à effectuer]\n\n{original_prompt}"
+        set_progress(task.id, "generation", f"Synthèse par {model}…")
+        original_prompt = task.llm_prompt
+        task.llm_prompt = prompt_synthese(
+            project_name=project.name, project_description=project.description,
+            brief=brief, requetes=requetes, sources=sources,
+            documents=documents.text, upstream=upstream,
+        )
+        try:
+            result = await self.llm_client.generate_text(task, model_override=model)
+        finally:
+            task.llm_prompt = original_prompt
+        task.generated_code = result if result and result.strip() else f"[Recherche à effectuer]\n\n{brief}"
+
+    async def _generate_research_queries(self, task: Task, project: Project) -> List[str]:
+        """3 à 5 requêtes web pour une tâche de recherche, par le modèle rapide."""
+        try:
+            reponse = await self.analyzer._generate_text_async(
+                prompt_requetes(project.name, project.description, task.title,
+                                brief_without_checklist(task.description) or task.llm_prompt),
+                model=self.analyzer._FAST_FALLBACK_MODEL,
+            )
+            requetes = parser_requetes(reponse)
+        except Exception as e:
+            logger.warning(f"🔬 Task {task.id}: requêtes impossibles ({e}), repli sur le titre")
+            requetes = []
+        return requetes or [task.title]
+
+    async def _collect_sources(self, task: Task, requetes: List[str], max_pages: int = 8) -> List[dict]:
+        """Cherche chaque requête, lit les premières pages, rend des sources numérotables."""
+        trouves: List[dict] = []
+        vus = set()
+        web_search = WebSearchService()
+        for i, requete in enumerate(requetes, 1):
+            set_progress(task.id, "search", f"Recherche web : « {requete} »", i, len(requetes))
+            try:
+                resultats = await web_search.search_text(requete, max_results=6)
+            except Exception as e:
+                logger.warning(f"🔬 Recherche « {requete} » en échec : {e}")
+                continue
+            for r in resultats:
+                url = r.get('href') or r.get('url')
+                if url and url not in vus:
+                    vus.add(url)
+                    trouves.append({'title': r.get('title', ''), 'url': url, 'text': r.get('body', '')})
+
+        sources: List[dict] = []
+        async with WebResearchModule() as research:
+            for i, s in enumerate(trouves[:max_pages], 1):
+                set_progress(task.id, "read", f"Lecture : {s['title'][:60] or s['url']}", i, min(len(trouves), max_pages))
+                texte = await research.fetch_page_text(s['url'], max_chars=3500)
+                # Page illisible (PDF, blocage, vide) : l'extrait du moteur vaut mieux que rien
+                s['text'] = texte if len(texte) >= 300 else (s.get('text') or '')
+                if s['text']:
+                    sources.append(s)
+        return sources
 
     async def _handle_administrative(self, task: Task) -> None:
         """Génère une checklist administrative détaillée via LLM"""

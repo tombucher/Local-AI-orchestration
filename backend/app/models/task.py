@@ -87,6 +87,10 @@ class Task(Base):
     llm_prompt = Column(Text, nullable=True)           # Prompt pour génération
     generated_code = Column(Text, nullable=True)       # Code généré par LLM
     validation_notes = Column(Text, nullable=True)     # Notes lors validation
+    # Réponse de l'utilisateur au résultat : précisions, réponses aux questions
+    # posées par le modèle, corrections. Lue par les tâches qui dépendent de
+    # celle-ci et par les veilles du projet.
+    user_notes = Column(Text, nullable=True)
     
     # Métriques
     estimated_duration = Column(Integer, nullable=True)  # Estimation en secondes

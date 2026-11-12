@@ -36,6 +36,8 @@ class TaskUpdate(BaseModel):
     llm_prompt: Optional[str] = None
     generated_code: Optional[str] = None
     validation_notes: Optional[str] = None
+    # Réponse de l'utilisateur au résultat (questions, précisions, corrections)
+    user_notes: Optional[str] = None
     estimated_duration: Optional[int] = Field(None, gt=0)
     due_date: Optional[datetime] = None
     metadata: Optional[dict] = Field(default_factory=dict)
@@ -56,6 +58,7 @@ class TaskResponse(TaskBase):
     project_name: Optional[str] = None  # Nom du projet (pour affichage)
     task_type: TaskType = TaskType.CODE_GENERATION
     status: TaskStatus
+    user_notes: Optional[str] = None
     llm_prompt: Optional[str] = None
     generated_code: Optional[str] = None
     validation_notes: Optional[str] = None

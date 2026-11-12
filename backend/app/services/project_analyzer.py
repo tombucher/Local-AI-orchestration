@@ -258,7 +258,7 @@ RÈGLES:
 - Couvre TOUS les aspects: design, dev, test, doc, déploiement
 - dependency_titles: TITRES EXACTS des autres tâches, graphe acyclique, pas d'auto-référence
 - Veilles: 1-3 max, uniquement si pertinentes, keywords très spécifiques
-- llm_prompt: obligatoire pour code_generation et document_writing (prompt détaillé pour le LLM qui exécutera la tâche)
+- llm_prompt: obligatoire pour code_generation et document_writing : décris le LIVRABLE (contenu, format, données concrètes), pas un rôle. Tout ce qui se regarde (affiche, visuel, maquette, prototype) = page HTML autonome, jamais Python/Pillow : le résultat est affiché dans un navigateur, pas exécuté.
 
 Retourne UNIQUEMENT le JSON."""
         return prompt
@@ -354,6 +354,11 @@ RÈGLES STRICTES:
 - Sous-tâches: 3-5 actions concrètes par tâche (pas juste 2!)
 - Sois EXHAUSTIF: couvre TOUS les aspects (design, dev, test, doc, déploiement, etc.)
 - Sois PRÉCIS: chaque tâche doit être claire et actionnable
+
+RÈGLES POUR llm_prompt (code_generation et document_writing):
+- Décris le LIVRABLE attendu : ce qu'il contient précisément, son format, les données concrètes à y faire figurer. Pas de rôle (« Tu es un consultant… ») : le modèle qui exécutera connaît déjà le projet et ses documents.
+- code_generation : le résultat est affiché dans un navigateur. Tout ce qui se regarde (affiche, visuel génératif, maquette, prototype, site) = une page HTML autonome (CSS/JS inclus, canvas, SVG ou p5.js). Jamais de Python/Pillow pour produire des images : il ne serait pas exécuté.
+- document_writing : nomme les sections, les chiffres et les décisions attendus (un devis a des lignes et des montants, un concept nomme ses polices et ses couleurs).
 
 RÈGLES POUR LES DÉPENDANCES:
 - Identifie les dépendances LOGIQUES entre les tâches (ex: "La conception doit être faite avant le développement")

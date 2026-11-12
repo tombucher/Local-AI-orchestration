@@ -32,6 +32,8 @@ from app.models.veille_topic import VeilleTopic
 logger = logging.getLogger(__name__)
 
 MAX_IDEATION_CHARS = 1500
+MAX_USER_NOTES = 5
+MAX_USER_NOTE_CHARS = 700
 MAX_TASK_TITLES = 12
 MAX_CURATION_EXAMPLES = 6
 
@@ -157,6 +159,17 @@ async def build_project_memory(
         lines.append("Chantiers en cours : " + " ; ".join(titles))
         for title in titles:
             vocabulary += _significant_words(title)
+
+    # --- Ce que l'utilisateur a précisé en réponse aux tâches ----------------
+    # Une tâche « préciser le périmètre » pose des questions ; les réponses
+    # écrites sur la tâche doivent changer ce que cherchent les veilles.
+    reponses = [
+        (t.title, t.user_notes.strip()) for t in tasks if (t.user_notes or "").strip()
+    ][:MAX_USER_NOTES]
+    for titre, note in reponses:
+        extrait = note if len(note) <= MAX_USER_NOTE_CHARS else note[:MAX_USER_NOTE_CHARS] + "…"
+        lines.append(f"Précisions de l'utilisateur ({titre}) : {extrait}")
+        vocabulary += _significant_words(note)
 
     # --- Curation : ce que l'utilisateur garde et ce qu'il jette ------------
     # C'est la partie qui « s'auto-mets à jour » : aucun réglage à maintenir,

@@ -55,6 +55,8 @@ export interface Task {
   llm_prompt: string | null;
   generated_code: string | null;
   validation_notes: string | null;
+  /** Réponse de l'utilisateur au résultat : précisions, réponses aux questions */
+  user_notes?: string | null;
   estimated_duration: number | null;
   actual_duration: number | null;
   due_date?: string | null;  // échéance
@@ -90,6 +92,7 @@ export interface TaskUpdate {
   due_date?: string | null;
   dependency_ids?: number[];
   metadata?: Record<string, any>;
+  user_notes?: string | null;
 }
 
 export interface TaskFilters {

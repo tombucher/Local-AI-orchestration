@@ -456,6 +456,11 @@ class OllamaClient:
             else:
                 feedback_section = f"\nFeedback précédent (IMPORTANT - prendre en compte ces remarques):\n{task.validation_notes}\n"
             logger.info(f"📝 [TASK-{task.id}] Including validation feedback in prompt: {task.validation_notes[:100]}...")
+        if getattr(task, 'user_notes', None) and task.user_notes.strip():
+            feedback_section += (
+                "\nRéponse et précisions de l'utilisateur (font autorité sur tout le reste) :\n"
+                f"{task.user_notes.strip()}\n"
+            )
 
         # Contexte d'atelier : plan de fichiers du projet + code déjà produit par
         # les autres tâches. C'est ce qui permet au HTML de référencer le bon CSS.
@@ -471,6 +476,7 @@ Description: {task.description or 'Not specified'}
 Context: {task.llm_prompt or 'None'}
 {feedback_section}
 Generate production-quality code. Include error handling and clear comments.
+The result is viewed in a browser: anything meant to be LOOKED AT (poster, generative visual, mockup, prototype, page) must be a self-contained HTML page (CSS and JS inline, canvas/SVG or p5.js from a CDN). A Python script that writes images will never be run here.
 Output ONLY the raw file content, with no explanations and no Markdown code fences."""
         return f"""{workspace_section}Tâche: {task.title}
 
@@ -479,6 +485,7 @@ Description: {task.description or 'Non spécifiée'}
 Contexte: {task.llm_prompt}
 {feedback_section}
 Génère du code de qualité avec commentaires et gestion des erreurs.
+Le résultat est affiché dans un navigateur : tout ce qui se REGARDE (affiche, visuel génératif, maquette, prototype, page) doit être une page HTML autonome (CSS et JS inclus, canvas/SVG ou p5.js via CDN). Un script Python qui écrit des images ne sera jamais exécuté ici.
 Réponds UNIQUEMENT avec le contenu brut du fichier, sans phrase d'introduction et sans balises ```."""
 
     def _build_text_prompt(self, task: Task, is_qwen3: bool = False) -> str:
@@ -490,6 +497,11 @@ Réponds UNIQUEMENT avec le contenu brut du fichier, sans phrase d'introduction 
             else:
                 feedback_section = f"\nFeedback précédent (IMPORTANT - prendre en compte ces remarques):\n{task.validation_notes}\n"
             logger.info(f"📝 [TASK-{task.id}] Including validation feedback in text prompt: {task.validation_notes[:100]}...")
+        if getattr(task, 'user_notes', None) and task.user_notes.strip():
+            feedback_section += (
+                "\nRéponse et précisions de l'utilisateur (font autorité sur tout le reste) :\n"
+                f"{task.user_notes.strip()}\n"
+            )
 
         if is_qwen3:
             return f"""Task: {task.title}

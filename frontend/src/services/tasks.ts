@@ -5,6 +5,17 @@
 import api from './api';
 import type { Task, TaskCreate, TaskUpdate, TaskFilters, TaskLog, VeilleResult, VeilleResultList, VeilleRefinePayload } from '../types/task.types';
 
+/** Résultat de la mise à jour d'une veille à partir d'une réponse */
+export interface VeilleTopicUpdate {
+  topic_id: number;
+  name: string;
+  keywords: string[];
+  excluded_keywords: string[];
+  added: string[];
+  removed: string[];
+  excluded: string[];
+}
+
 export const tasksService = {
   /**
    * Récupérer toutes les tâches avec filtres optionnels
@@ -164,6 +175,12 @@ export const tasksService = {
   /**
    * Affiner les paramètres de veille pour les prochaines occurrences
    */
+  /** La réponse écrite sur la tâche fait évoluer les veilles du projet */
+  applyNotesToVeille: async (id: number): Promise<{ topics: VeilleTopicUpdate[] }> => {
+    const response = await api.post<{ topics: VeilleTopicUpdate[] }>(`/tasks/${id}/notes-to-veille`);
+    return response.data;
+  },
+
   refineVeille: async (id: number, refinement: VeilleRefinePayload): Promise<void> => {
     await api.put(`/tasks/${id}/veille-refine`, refinement);
   },

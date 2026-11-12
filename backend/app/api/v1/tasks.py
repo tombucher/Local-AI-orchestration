@@ -1231,6 +1231,29 @@ async def rescan_veille(
     return {"status": "created", "task_id": new_task.id}
 
 
+@router.post("/{task_id}/notes-to-veille")
+async def notes_to_veille(
+    task_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """La réponse écrite sur cette tâche fait évoluer les veilles du projet.
+
+    Mots-clés ajoutés, retirés ou exclus par le modèle rapide d'après la
+    réponse ; note inscrite dans l'historique d'affinage ; prochaine
+    occurrence avancée à tout de suite.
+    """
+    from app.services.veille_update import appliquer_notes_aux_veilles
+
+    task = await _get_user_task_model(task_id, current_user.id, db)
+    if not (task.user_notes or '').strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Écris d'abord ta réponse sur la tâche")
+    topics = await appliquer_notes_aux_veilles(db, task)
+    await db.commit()
+    return {"topics": topics}
+
+
 @router.put("/{task_id}/veille-refine")
 async def refine_veille(
     task_id: int,

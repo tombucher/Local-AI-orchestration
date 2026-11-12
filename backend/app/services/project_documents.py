@@ -25,8 +25,11 @@ from app.models.project_document import DocumentKind, ProjectDocument
 logger = logging.getLogger(__name__)
 
 # Budget de texte issu des documents, par génération
-MAX_CONTEXT_CHARS = 12000
-MAX_CHARS_PER_DOCUMENT = 6000
+# Un cahier des charges fait couramment 8 000 à 12 000 caractères : avec 6 000
+# par document, la fin (critères, livrables, budget, date limite) n'arrivait
+# jamais au modèle. Les fenêtres utilisées (16k–32k tokens) absorbent 24 000.
+MAX_CONTEXT_CHARS = 24000
+MAX_CHARS_PER_DOCUMENT = 14000
 # Au-delà, une image coûte trop de tokens pour un modèle local
 MAX_IMAGES = 3
 

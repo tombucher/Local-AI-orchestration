@@ -20,6 +20,7 @@ import { TaskHeader } from '../../components/tasks/TaskHeader';
 import { TaskStatusPanel } from '../../components/tasks/TaskStatusPanel';
 import { TaskReviewActions } from '../../components/tasks/TaskReviewActions';
 import { TaskResultPanel, hasGeneratedContent } from '../../components/tasks/TaskResultPanel';
+import { TaskUserNotes } from '../../components/tasks/TaskUserNotes';
 import { getValidateLabel, isTextTask, isVeilleTask } from '../../components/tasks/taskTypeUtils';
 import ConfirmDialog from '../../components/ui/ConfirmDialog';
 import InkLoader from '../../components/ui/Loader';
@@ -319,6 +320,8 @@ export const TaskDetail = () => {
               <p className="text-sm text-ink-soft">{task.validation_notes}</p>
             </div>
           )}
+          {/* Le résultat pose des questions ? C'est ici qu'on y répond. */}
+          <TaskUserNotes key={task.id} task={task} />
           {isVeilleTask(task.task_type) && (
             <div className="bg-info/5 border border-info/30 p-4 flex items-center justify-between gap-4">
               <p className="text-sm text-info">Nouveau scan pour actualiser les résultats ?</p>

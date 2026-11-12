@@ -116,6 +116,11 @@ async def build_upstream_context(
         if not body:
             body = "(Cette tâche n'a encore rien produit : ne suppose pas son contenu.)"
 
+        # Ce que l'utilisateur a répondu au résultat fait autorité sur le résultat
+        reponse = (dep.user_notes or "").strip()
+        if reponse:
+            body += f"\n\n**Réponse et précisions de l'utilisateur (font autorité) :**\n{reponse}"
+
         limit = min(MAX_CHARS_PER_TASK, budget)
         if len(body) > limit:
             body = body[:limit] + "\n… (tronqué)"

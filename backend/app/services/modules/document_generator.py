@@ -43,7 +43,8 @@ class DocumentGeneratorModule:
         self,
         prompt: str,
         model: str = "mistral:7b-instruct-q4_K_M",
-        max_tokens: int = 2000
+        max_tokens: int = 2000,
+        system: Optional[str] = None,
     ) -> str:
         """Génère du texte avec le LLM"""
         model = resolve_model(model, "document")
@@ -53,7 +54,7 @@ class DocumentGeneratorModule:
                 messages=[
                     {
                         'role': 'system',
-                        'content': 'Tu es un rédacteur professionnel expert en documents institutionnels et techniques.'
+                        'content': system or 'Tu es un rédacteur professionnel expert en documents institutionnels et techniques.'
                     },
                     {
                         'role': 'user',
@@ -131,6 +132,39 @@ class DocumentGeneratorModule:
 
         logger.info(f"✓ Generated {document_type} document ({len(document)} chars)")
 
+        return document
+
+    async def write_deliverable(
+        self,
+        *,
+        project_name: str,
+        project_description: Optional[str],
+        brief: str,
+        plan: List[str],
+        documents: Optional[str],
+        upstream: Optional[str],
+        model: Optional[str] = None,
+        feedback: Optional[str] = None,
+    ) -> str:
+        """Rédige le livrable d'une tâche de rédaction, sans gabarit imposé.
+
+        L'ancien chemin (`generate_document`) coulait tout dans « Introduction /
+        Contenu principal / Conclusion » à 250 mots la section : un mémoire
+        technique sortait en trois paragraphes, une offre financière sans un
+        seul montant. Ici le plan vient des sous-tâches de l'utilisateur, les
+        règles exigent du concret, et la longueur n'est plus plafonnée par section.
+        """
+        from app.services.livrables import SYSTEME_LIVRABLE, prompt_document
+
+        prompt = prompt_document(
+            project_name=project_name, project_description=project_description,
+            brief=brief, plan=plan, documents=documents, upstream=upstream, feedback=feedback,
+        )
+        document = await asyncio.to_thread(
+            self._generate_with_llm, prompt=prompt, model=model or "mistral",
+            max_tokens=8000, system=SYSTEME_LIVRABLE,
+        )
+        logger.info(f"✓ Livrable rédigé ({len(document)} chars)")
         return document
 
     async def generate_funding_application(
