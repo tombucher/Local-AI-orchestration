@@ -22,7 +22,7 @@ interface TasksState {
   updateTask: (id: number, data: TaskUpdate) => Promise<void>;
   deleteTask: (id: number) => Promise<void>;
   validateTask: (id: number, approved: boolean, notes?: string, editedCode?: string) => Promise<void>;
-  rejectTask: (id: number, notes: string) => Promise<void>;
+  rejectTask: (id: number, notes: string, fichier?: string) => Promise<void>;
   cancelTask: (id: number) => Promise<void>;
   retryTask: (id: number) => Promise<void>;
   generateTask: (id: number) => Promise<void>;
@@ -133,10 +133,10 @@ export const useTasksStore = create<TasksState>((set, get) => ({
   /**
    * Rejeter le code généré
    */
-  rejectTask: async (id, notes) => {
+  rejectTask: async (id, notes, fichier) => {
     set({ loading: true, error: null });
     try {
-      const task = await tasksService.rejectTask(id, notes);
+      const task = await tasksService.rejectTask(id, notes, fichier);
       set((state) => ({
         tasks: state.tasks.map((t) => (t.id === id ? task : t)),
         currentTask: task,

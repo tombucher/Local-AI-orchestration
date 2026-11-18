@@ -141,11 +141,14 @@ export const TaskDetail = () => {
     setIsEditing(false);
   }, isEditing ? 'Validé avec tes modifications' : 'Résultat validé');
 
-  const handleAdjust = (notes?: string) => run(async () => {
-    await rejectTask(task.id, notes || 'Ajustement demandé');
+  // L'ajustement relance aussitôt la génération : avant, la tâche restait
+  // « prête » sans repartir, et il fallait encore cliquer « Lancer »
+  const handleAdjust = (notes?: string, fichier?: string) => run(async () => {
+    await rejectTask(task.id, notes || 'Ajustement demandé', fichier);
+    await generateTask(task.id);
     setModalType(null);
     await refresh();
-  }, "Demande d'ajustement envoyée");
+  }, fichier ? `Correction de ${fichier} lancée` : 'Ajustement lancé');
 
   const handleReject = (notes?: string) => run(async () => {
     await rejectTask(task.id, notes || 'Résultat rejeté');
@@ -345,6 +348,7 @@ export const TaskDetail = () => {
         type={modalType || 'validate'}
         taskTitle={task.title}
         loading={actionLoading}
+        fichiers={task.metadata?.artifact_files ?? []}
       />
 
       <ConfirmDialog

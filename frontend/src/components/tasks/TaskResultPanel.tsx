@@ -9,7 +9,7 @@
 import { Pencil } from 'lucide-react';
 import type { Task, VeilleResult, VeilleRefinePayload } from '../../types/task.types';
 import { TaskStatus, TaskType } from '../../types/task.types';
-import { CodeViewer } from './CodeViewer';
+import { TaskCodeReview } from './TaskCodeReview';
 import { RadarViewer } from './RadarViewer';
 import { VeilleResultsViewer } from './VeilleResultsViewer';
 import { MarkdownViewer, isTextTask, isVeilleTask } from './taskTypeUtils';
@@ -45,21 +45,6 @@ const EditButton = ({ onClick }: { onClick: () => void }) => (
     Éditer
   </button>
 );
-
-/** Langage Prism déduit du fichier produit par la tâche (défaut : texte brut). */
-const LANGUAGE_BY_EXTENSION: Record<string, string> = {
-  html: 'markup', htm: 'markup', svg: 'markup', vue: 'markup',
-  css: 'css', scss: 'scss', sass: 'sass',
-  js: 'javascript', mjs: 'javascript', cjs: 'javascript', jsx: 'jsx',
-  ts: 'typescript', tsx: 'tsx',
-  py: 'python', json: 'json', yml: 'yaml', yaml: 'yaml', md: 'markdown',
-  sh: 'bash', sql: 'sql', toml: 'toml', rs: 'rust', go: 'go', php: 'php', rb: 'ruby',
-};
-
-const languageFromPath = (path?: string): string => {
-  const extension = path?.split('.').pop()?.toLowerCase();
-  return (extension && LANGUAGE_BY_EXTENSION[extension]) || 'python';
-};
 
 export const TaskResultPanel = ({
   task, veilleResults, veilleTotal, veilleLoading,
@@ -151,21 +136,22 @@ export const TaskResultPanel = ({
   // Le fichier cible est fixé par le plan d'atelier du projet (backend :
   // project_workspace) ; il détermine aussi la coloration syntaxique.
   const artifactPath: string | undefined = task.metadata?.artifact_path;
+  const artifactFiles: string[] = task.metadata?.artifact_files ?? (artifactPath ? [artifactPath] : []);
 
   return (
     <Card>
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-baseline gap-3">
           <h2 className="font-display text-xl text-ink">Code généré</h2>
-          {artifactPath && (
-            <span className="font-mono text-xs text-ink-soft bg-paper-warm border border-ink-line px-2 py-0.5">
-              {artifactPath}
+          {artifactFiles.length > 0 && (
+            <span className="font-mono text-xs text-ink-soft">
+              {artifactFiles.length > 1 ? `${artifactFiles.length} fichiers` : artifactFiles[0]}
             </span>
           )}
         </div>
         {canEdit && <EditButton onClick={onStartEditing} />}
       </div>
-      <CodeViewer code={task.generated_code || ''} language={languageFromPath(artifactPath)} />
+      <TaskCodeReview task={task} />
     </Card>
   );
 };

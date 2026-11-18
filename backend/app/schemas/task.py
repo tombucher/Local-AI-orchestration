@@ -49,6 +49,8 @@ class TaskValidate(BaseModel):
     approved: bool
     notes: Optional[str] = None
     edited_code: Optional[str] = None  # Code modifié par l'utilisateur (édition inline)
+    # Ajustement d'un seul fichier d'une page (index.css…) : les autres restent
+    fichier: Optional[str] = None
 
 
 class TaskResponse(TaskBase):

@@ -810,15 +810,20 @@ async def reject_task(
     # Code rejeté → retour en READY pour régénération
     task.status = TaskStatus.READY
     task.validation_notes = rejection.notes
-    task.generated_code = None  # Nettoyer le code rejeté
     task.started_at = None
+    fichiers_page = (task.task_metadata or {}).get('artifact_files') or []
+    if rejection.fichier and rejection.fichier in fichiers_page:
+        # Un seul fichier à corriger : le code reste, la génération ne réécrira que lui
+        task.task_metadata = {**(task.task_metadata or {}), 'fichier_a_ajuster': rejection.fichier}
+    else:
+        task.generated_code = None  # Nettoyer le code rejeté
 
     await _create_task_log(
         db=db,
         task_id=task.id,
         event_type=TaskEventType.REJECTED,
         user_id=current_user.id,
-        details={"notes": rejection.notes}
+        details={"notes": rejection.notes, **({"fichier": rejection.fichier} if rejection.fichier else {})}
     )
 
     await db.commit()
@@ -1240,6 +1245,39 @@ async def rescan_veille(
 
     logger.info(f"🔄 Veille rescan: nouvelle tâche {new_task.id} pour topic {topic.id}")
     return {"status": "created", "task_id": new_task.id}
+
+
+@router.get("/{task_id}/apercu")
+async def task_preview_files(
+    task_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Les fichiers à assembler pour voir tourner le code de cette tâche.
+
+    Ceux de la tâche (`mine`), plus ceux des autres tâches du projet : une
+    feuille de styles se juge sur la page qu'elle habille. `entry` est la page
+    à ouvrir : celle de la tâche si elle en écrit une, sinon celle du projet.
+    """
+    from app.services.code_language import detect_language
+    from app.services.project_export import collect_project_files, entry_page
+
+    task = await _get_user_task_model(task_id, current_user.id, db)
+    projet = await db.get(Project, task.project_id)
+    fichiers = await collect_project_files(db, projet)
+    miens = [f for f in fichiers.code if f.task_id == task.id]
+    pages = [f.path for f in miens if f.path.lower().endswith(('.html', '.htm'))
+             and detect_language(f.content) in ('html', None)]
+    entry = pages[0] if pages else (entry_page(fichiers) if miens else None)
+    ordre = list((task.task_metadata or {}).get('artifact_files') or [])
+    miens.sort(key=lambda f: ordre.index(f.path) if f.path in ordre else len(ordre))
+    autres = [f for f in fichiers.code if f.task_id != task.id]
+    return {
+        "entry": entry,
+        "files": [{"path": f.path, "content": f.content, "language": detect_language(f.content),
+                   "task_id": f.task_id, "task_title": f.task_title, "mine": f.task_id == task.id}
+                  for f in miens + autres],
+    }
 
 
 @router.post("/{task_id}/notes-to-veille")

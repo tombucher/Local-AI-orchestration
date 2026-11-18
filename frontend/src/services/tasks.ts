@@ -92,10 +92,12 @@ export const tasksService = {
   /**
    * Rejeter le code généré
    */
-  rejectTask: async (id: number, notes: string): Promise<Task> => {
+  rejectTask: async (id: number, notes: string, fichier?: string): Promise<Task> => {
     const response = await api.post<Task>(`/tasks/${id}/reject`, {
       approved: false,
       notes,
+      // Un seul fichier d'une page à corriger : les autres restent
+      ...(fichier ? { fichier } : {}),
     });
     return response.data;
   },

@@ -13,7 +13,7 @@ import asyncio
 import logging
 import re
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
@@ -33,7 +33,10 @@ from app.services.modules.document_generator import DocumentGeneratorModule
 from app.services.web_search_service import WebSearchService
 from app.core.config import settings as app_settings
 from app.services.model_registry import resolve_model, supports_vision, think_kwargs
-from app.services.project_workspace import build_workspace_context
+from app.services.project_workspace import build_workspace_context, bundle_step_context
+from app.services.code_cleanup import (
+    extraire_en_ligne, fichier_plausible, join_multi_file, retirer_preambule, split_multi_file,
+)
 from app.services.code_language import effective_path, file_slug
 from app.services.project_memory import build_project_memory, score_against_memory
 from app.services.task_progress import clear_progress, set_progress, task_finished, task_started
@@ -351,6 +354,26 @@ class UnifiedOrchestrator:
         upstream = await build_upstream_context(self.db, task, skip_code=True, max_chars=6000)
         reference = "\n\n".join(part for part in (upstream, documents.text) if part)
 
+        # Correction ciblée d'un seul fichier d'une page (« Ajuster » → style.css) :
+        # les deux autres restent tels quels, le modèle ne réécrit que celui-là
+        # La cible n'est retirée qu'une fois le fichier réécrit : si le modèle
+        # échoue, la relance corrige toujours ce seul fichier
+        metadata = dict(task.task_metadata or {})
+        cible = metadata.get('fichier_a_ajuster')
+        fichiers_page = list(metadata.get('artifact_files') or [])
+        existants = split_multi_file(task.generated_code) if cible else {}
+        if cible and len(fichiers_page) == 3 and cible in existants:
+            await self._ajuster_un_fichier(task, model, workspace.text, fichiers_page, existants, cible,
+                                           reference, documents.images)
+            return
+        if cible:
+            metadata.pop('fichier_a_ajuster', None)
+            task.task_metadata = metadata  # cible introuvable : on régénère tout
+
+        if workspace.bundle:
+            await self._generer_page(task, model, workspace.text, workspace.bundle, reference, documents.images)
+            return
+
         set_progress(task.id, "generation", f"Génération du code par {model}…")
         code = await self.llm_client.generate_code(
             task, model_override=model,
@@ -358,6 +381,7 @@ class UnifiedOrchestrator:
             document_context=reference or None,
             images=documents.images or None,
         )
+        code = retirer_preambule(code, workspace.own_path)
         task.generated_code = code
 
         # Figer le fichier attribué par le plan : les tâches suivantes s'y réfèrent
@@ -372,6 +396,108 @@ class UnifiedOrchestrator:
             if metadata.get('artifact_path') != chemin:
                 metadata['artifact_path'] = chemin
                 task.task_metadata = metadata
+
+    SEUIL_EXTRAIT = 200  # en dessous, ce qui a été écrit dans la page ne remplace pas un vrai fichier
+
+    async def _generer_page(self, task: Task, model: str, contexte: str, bundle: List[str],
+                            reference: str, images: Optional[list]) -> None:
+        """Une page en trois fichiers (HTML, puis CSS, puis JS), un appel au modèle chacun.
+
+        Chaque appel voit les fichiers déjà écrits : le CSS stylise les classes
+        réelles du HTML, le JS branche ses vrais boutons. Trois sorties courtes
+        au lieu d'une longue : plus de page coupée par la limite de sortie.
+        """
+        html_p, css_p, js_p = bundle
+        fichiers: Dict[str, str] = {}
+        prefixes: Dict[str, str] = {}
+        tronques: List[str] = []
+        for rang, chemin in enumerate(bundle, 1):
+            if chemin in fichiers:
+                continue  # déjà sorti de la page par extraire_en_ligne
+            set_progress(task.id, "generation", f"Fichier {rang}/3 : {chemin}, par {model}…")
+            code, tronque = await self._ecrire_fichier(
+                task, model, bundle_step_context(contexte, bundle, chemin, fichiers), chemin, reference,
+                (images or None) if chemin != js_p else None)
+            if tronque:
+                tronques.append(chemin)
+            if chemin == html_p:
+                # Le modèle a quand même écrit styles ou script dans la page :
+                # on les sort vers leurs fichiers plutôt que de les perdre
+                page, css, js = extraire_en_ligne(code, css_p, js_p)
+                fichiers[html_p] = page
+                for extrait, cible in ((css, css_p), (js, js_p)):
+                    if len(extrait) >= self.SEUIL_EXTRAIT:
+                        fichiers[cible] = extrait
+                    elif extrait:
+                        prefixes[cible] = extrait
+            else:
+                fichiers[chemin] = f"{prefixes[chemin]}\n\n{code}" if chemin in prefixes else code
+
+        task.generated_code = join_multi_file({p: fichiers[p] for p in bundle if p in fichiers})
+        metadata = dict(task.task_metadata or {})
+        metadata.pop('fichier_a_ajuster', None)
+        metadata['artifact_path'] = html_p
+        metadata['artifact_files'] = [p for p in bundle if p in fichiers]
+        # Fichier coupé par la limite de sortie : dit à l'écran de validation
+        if tronques:
+            metadata['fichiers_tronques'] = tronques
+        else:
+            metadata.pop('fichiers_tronques', None)
+        task.task_metadata = metadata
+        logger.info(f"📄 Tâche {task.id} : page en {len(fichiers)} fichiers ({', '.join(fichiers)})")
+
+    async def _ecrire_fichier(self, task: Task, model: str, contexte: str, chemin: str,
+                              reference: str, images: Optional[list]) -> tuple:
+        """Un fichier de la page, redemandé une fois si la réponse n'en est pas un.
+
+        Renvoie (contenu, coupé par la limite de longueur ?).
+        """
+        for essai in (1, 2):
+            code = await self.llm_client.generate_code(
+                task, model_override=model, workspace_context=contexte,
+                document_context=reference or None, images=images,
+            )
+            code = retirer_preambule(code, chemin)
+            tronque = bool(getattr(self.llm_client, 'derniere_sortie_tronquee', False))
+            if fichier_plausible(code, chemin):
+                return code, tronque
+            logger.warning(f"⚠️ Tâche {task.id} : réponse sans le contenu de {chemin} "
+                           f"(essai {essai}) : {code.strip()[:80]!r}")
+            contexte += (f"\n\nATTENTION : ta réponse précédente n'était pas le contenu de `{chemin}` "
+                         f"(« {code.strip()[:60]} »). Écris maintenant le fichier complet.")
+        raise ValueError(f"Le modèle n'a pas écrit {chemin} : sa réponse était « {code.strip()[:80]} ». "
+                         "Relance la tâche.")
+
+    async def _ajuster_un_fichier(self, task: Task, model: str, contexte: str, bundle: List[str],
+                                  fichiers: Dict[str, str], cible: str,
+                                  reference: str, images: Optional[list]) -> None:
+        """Réécrit un seul fichier de la page d'après le feedback (validation_notes)."""
+        html_p, css_p, js_p = bundle
+        set_progress(task.id, "generation", f"Correction de {cible} par {model}…")
+        code, tronque = await self._ecrire_fichier(
+            task, model, bundle_step_context(contexte, bundle, cible, fichiers, ajustement=True), cible,
+            reference, (images or None) if cible != js_p else None)
+        metadata = dict(task.task_metadata or {})
+        tronques = [p for p in metadata.get('fichiers_tronques', []) if p != cible]
+        if tronque:
+            tronques.append(cible)
+        if tronques:
+            metadata['fichiers_tronques'] = tronques
+        else:
+            metadata.pop('fichiers_tronques', None)
+        metadata.pop('fichier_a_ajuster', None)
+        task.task_metadata = metadata
+        fichiers = dict(fichiers)
+        if cible == html_p:
+            page, css, js = extraire_en_ligne(code, css_p, js_p)
+            fichiers[html_p] = page
+            for extrait, autre in ((css, css_p), (js, js_p)):
+                if extrait:
+                    fichiers[autre] = f"{fichiers.get(autre, '').rstrip()}\n\n/* Sorti de {html_p} */\n{extrait}\n"
+        else:
+            fichiers[cible] = code
+        task.generated_code = join_multi_file({p: fichiers[p] for p in bundle if p in fichiers})
+        logger.info(f"📄 Tâche {task.id} : {cible} corrigé, les autres fichiers inchangés")
 
     async def _handle_veille(self, task: Task) -> None:
         """Gère les tâches de veille — type unifié

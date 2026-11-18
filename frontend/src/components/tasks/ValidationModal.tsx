@@ -8,10 +8,12 @@ import { X, Check, Edit, XCircle } from 'lucide-react';
 interface ValidationModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: (notes?: string) => void;
+  onConfirm: (notes?: string, fichier?: string) => void;
   type: 'validate' | 'adjust' | 'reject';
   taskTitle: string;
   loading?: boolean;
+  /** Fichiers d'une page (HTML, CSS, JS) : l'ajustement peut viser l'un d'eux */
+  fichiers?: string[];
 }
 
 const modalConfig = {
@@ -51,8 +53,11 @@ export const ValidationModal = ({
   type,
   taskTitle,
   loading = false,
+  fichiers = [],
 }: ValidationModalProps) => {
   const [notes, setNotes] = useState('');
+  const [fichier, setFichier] = useState('');
+  const choixFichier = type === 'adjust' && fichiers.length > 1;
   const config = modalConfig[type];
   const Icon = config.icon;
   const notesRequired = type !== 'validate';
@@ -64,7 +69,7 @@ export const ValidationModal = ({
     if (notesRequired && !notes.trim()) {
       return;
     }
-    onConfirm(notes.trim() || undefined);
+    onConfirm(notes.trim() || undefined, choixFichier && fichier ? fichier : undefined);
   };
 
   return (
@@ -92,6 +97,24 @@ export const ValidationModal = ({
               <p className="text-sm text-ink-soft mb-1">Tâche concernée :</p>
               <p className="font-medium text-ink">{taskTitle}</p>
             </div>
+
+            {choixFichier && (
+              <div>
+                <label className="block text-sm font-medium text-ink-soft mb-2">Fichier à corriger</label>
+                <select
+                  value={fichier}
+                  onChange={(e) => setFichier(e.target.value)}
+                  disabled={loading}
+                  className="w-full px-3 py-2 border border-ink-line bg-paper-card text-sm text-ink focus:outline-none focus:border-accent"
+                >
+                  <option value="">Toute la page (les {fichiers.length} fichiers sont réécrits)</option>
+                  {fichiers.map((f) => <option key={f} value={f}>{f} seulement</option>)}
+                </select>
+                <p className="mt-1 text-xs text-ink-faint">
+                  Un seul fichier : le modèle ne réécrit que lui, plus vite, et les autres ne bougent pas.
+                </p>
+              </div>
+            )}
 
             <div>
               <label className="block text-sm font-medium text-ink-soft mb-2">

@@ -23,11 +23,8 @@ from app.services.code_contract import check_coherence
 from app.services.code_language import detect_language, effective_path, file_slug
 from app.services.project_workspace import build_file_plan
 from app.services.task_chain import RESULT_TYPES
-
-# Une tâche transverse (intégration, relecture) rend plusieurs fichiers ainsi
-# Tout marqueur est reconnu, même au chemin douteux : sinon son contenu se collait
-# au fichier précédent. Les chemins refusés par safe_path sont ensuite écartés.
-_MULTI_FILE = re.compile(r"^===\s*(\S[^=\n]*?)\s*===\s*$", re.MULTILINE)
+# Réexportés : project_folders et l'API les importent d'ici
+from app.services.code_cleanup import join_multi_file, safe_path, split_multi_file  # noqa: F401
 
 LIBELLES_LANGAGE = {"py": "Python", "html": "HTML", "htm": "HTML", "css": "CSS", "js": "JavaScript",
                     "md": "Markdown", "json": "JSON", "php": "PHP", "sh": "shell", "svg": "SVG"}
@@ -58,29 +55,6 @@ class ProjectFiles:
     @property
     def all(self) -> List[ProducedFile]:
         return self.code + self.documents
-
-
-def safe_path(path: Optional[str]) -> Optional[str]:
-    """Chemin relatif sans remontée : le modèle écrit les chemins, pas nous."""
-    if not path:
-        return None
-    clean = posixpath.normpath(path.replace("\\", "/")).lstrip("/")
-    if clean in ("", ".") or clean.startswith("..") or "/../" in f"/{clean}/":
-        return None
-    return clean
-
-
-def split_multi_file(code: str) -> Dict[str, str]:
-    """Découpe une sortie `=== chemin ===` en fichiers ; vide si ce n'en est pas une."""
-    marks = list(_MULTI_FILE.finditer(code or ""))
-    files = {}
-    for i, mark in enumerate(marks):
-        end = marks[i + 1].start() if i + 1 < len(marks) else len(code)
-        body = code[mark.end():end].strip("\n")
-        path = safe_path(mark.group(1))
-        if body.strip() and path:
-            files[path] = body + "\n"
-    return files
 
 
 def _slug(text: str, max_length: int = 60) -> str:
@@ -125,14 +99,17 @@ async def collect_project_files(db: AsyncSession, project: Project) -> ProjectFi
         if not code:
             continue
         prevu = safe_path((task.task_metadata or {}).get("artifact_path") or plan.get(task.id))
-        path = safe_path(effective_path(prevu, code, file_slug(task.title)))
+        # Plusieurs fichiers (page en HTML + CSS + JS, ou retouches d'une tâche
+        # transverse) : chacun sous son chemin
+        plusieurs = split_multi_file(code)
+        path = None if plusieurs else safe_path(effective_path(prevu, code, file_slug(task.title)))
         if path:
             if path != prevu:
                 renommes.append(f"« {task.title} » contient du {_langage(path)}, pas du {_langage(prevu)} : "
                                 f"rangé sous `{path}` au lieu de `{prevu}`.")
             by_path[path] = ProducedFile(path, code + "\n", task.id, task.title, "code")
         else:
-            for sub_path, body in split_multi_file(code).items():
+            for sub_path, body in plusieurs.items():
                 by_path[sub_path] = ProducedFile(sub_path, body, task.id, task.title, "code")
     files.code = sorted(by_path.values(), key=lambda f: f.path)
 

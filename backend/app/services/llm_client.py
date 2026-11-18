@@ -21,6 +21,8 @@ from app.services.code_cleanup import strip_code_fences
 
 logger = logging.getLogger(__name__)
 
+DELAI_OLLAMA = 900.0  # secondes sans aucun morceau de réponse avant d'abandonner
+
 class OllamaClient:
     """
     Client pour Ollama natif macOS avec streaming et monitoring
@@ -37,14 +39,16 @@ class OllamaClient:
             host: URL de l'instance Ollama (défaut: host.docker.internal depuis Docker)
         """
         self.host = host
-        # Configurer le client avec un timeout de 300 secondes (5 minutes)
-        self.client = ollama.Client(host=host, timeout=300.0)
+        # Délai entre deux morceaux de réponse. 300 s ne suffisaient pas : avec
+        # un prompt de 45 000 caractères (une page à corriger, fichiers
+        # complets), qwen 27B lit plus de 5 minutes avant son premier token
+        self.client = ollama.Client(host=host, timeout=DELAI_OLLAMA)
         # Client asynchrone pour le streaming : itérer le client synchrone dans une
         # coroutine bloquait la boucle d'événements pendant TOUTE la génération —
         # plusieurs minutes durant lesquelles l'API ne répondait plus à rien, pas
         # même au health check ni au suivi d'avancement.
-        self.async_client = ollama.AsyncClient(host=host, timeout=300.0)
-        logger.info(f"✅ Ollama client initialized: {host} (timeout: 300s)")
+        self.async_client = ollama.AsyncClient(host=host, timeout=DELAI_OLLAMA)
+        logger.info(f"✅ Ollama client initialized: {host} (timeout: {DELAI_OLLAMA:.0f}s)")
 
     async def generate_code(
         self,
@@ -74,6 +78,9 @@ class OllamaClient:
         """
         model = self._select_model(task, model_override, user_settings)
         is_qwen3 = self._is_qwen3_model(model)
+        # Vrai si la dernière sortie a été coupée par la limite de longueur
+        # (done_reason « length ») : le fichier est alors incomplet
+        self.derniere_sortie_tronquee = False
         prompt = self._build_prompt(task, is_qwen3, workspace_context, document_context)
         system_prompt = self._build_system_prompt(is_qwen3)
         options = self._get_llm_options(is_qwen3)
@@ -148,6 +155,9 @@ class OllamaClient:
                 # Note: Ollama envoie plusieurs chunks avec done=True, donc on continue la boucle
                 # jusqu'à ce qu'elle se termine naturellement
                 if chunk.get('done', False):
+                    if chunk.get('done_reason') == 'length':
+                        self.derniere_sortie_tronquee = True
+                        logger.warning(f"✂️ [TASK-{task.id}] Sortie coupée par la limite de longueur du modèle")
                     end_time = time.time()
                     total_time = end_time - start_time
                     logger.info(f"✅ [TASK-{task.id}] Done chunk received ({chunk_count} chunks so far)")
@@ -423,7 +433,10 @@ class OllamaClient:
             return {
                 'temperature': 0.6,
                 'num_ctx': 32768,
-                'num_predict': 8192,
+                # 8192 coupait le script d'une page riche (31 000 caractères) en
+                # pleine ligne ; le prompt d'une page en trois fichiers reste
+                # sous 10 000 tokens, 16 384 de sortie tiennent dans le contexte
+                'num_predict': 16384,
                 'top_p': 0.9,
                 'top_k': 40,
                 'repeat_penalty': 1.05,
@@ -476,7 +489,7 @@ Description: {task.description or 'Not specified'}
 Context: {task.llm_prompt or 'None'}
 {feedback_section}
 Generate production-quality code. Include error handling and clear comments.
-The result is viewed in a browser: anything meant to be LOOKED AT (poster, generative visual, mockup, prototype, page) must be a self-contained HTML page (CSS and JS inline, canvas/SVG or p5.js from a CDN). A Python script that writes images will never be run here.
+The result is viewed in a browser: anything meant to be LOOKED AT (poster, generative visual, mockup, prototype, page) is a web page (HTML, CSS and JavaScript as the file plan says; canvas/SVG or p5.js from a CDN). A Python script that writes images will never be run here.
 Output ONLY the raw file content, with no explanations and no Markdown code fences."""
         return f"""{workspace_section}Tâche: {task.title}
 
@@ -485,7 +498,7 @@ Description: {task.description or 'Non spécifiée'}
 Contexte: {task.llm_prompt}
 {feedback_section}
 Génère du code de qualité avec commentaires et gestion des erreurs.
-Le résultat est affiché dans un navigateur : tout ce qui se REGARDE (affiche, visuel génératif, maquette, prototype, page) doit être une page HTML autonome (CSS et JS inclus, canvas/SVG ou p5.js via CDN). Un script Python qui écrit des images ne sera jamais exécuté ici.
+Le résultat est affiché dans un navigateur : tout ce qui se REGARDE (affiche, visuel génératif, maquette, prototype, page) est une page web (HTML, CSS et JavaScript selon le plan de fichiers ; canvas/SVG ou p5.js via CDN). Un script Python qui écrit des images ne sera jamais exécuté ici.
 Réponds UNIQUEMENT avec le contenu brut du fichier, sans phrase d'introduction et sans balises ```."""
 
     def _build_text_prompt(self, task: Task, is_qwen3: bool = False) -> str:
