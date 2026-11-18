@@ -225,7 +225,13 @@ export const TaskDetail = () => {
       <div className="flex items-center gap-2 text-sm mb-6">
         <Link to="/dashboard" className="text-ink-soft hover:text-accent">Accueil</Link>
         <ChevronRight className="w-4 h-4 text-ink-faint" />
-        <Link to="/tasks" className="text-ink-soft hover:text-accent">Tâches</Link>
+        {/* Le projet de la tâche, pas la liste de toutes les tâches : c'est là
+            qu'on revient après avoir validé ou lancé */}
+        <Link to="/projects" className="text-ink-soft hover:text-accent">Projets</Link>
+        <ChevronRight className="w-4 h-4 text-ink-faint" />
+        <Link to={`/projects/${task.project_id}`} className="text-ink-soft hover:text-accent">
+          {task.project_name || 'Projet'}
+        </Link>
         <ChevronRight className="w-4 h-4 text-ink-faint" />
         <span className="text-ink">{task.title}</span>
       </div>

@@ -1260,18 +1260,25 @@ async def task_preview_files(
     à ouvrir : celle de la tâche si elle en écrit une, sinon celle du projet.
     """
     from app.services.code_language import detect_language
-    from app.services.project_export import collect_project_files, entry_page
+    from app.services.project_export import ProducedFile, collect_project_files, entry_page, fichiers_de_la_tache
+    from app.services.project_workspace import build_file_plan
 
     task = await _get_user_task_model(task_id, current_user.id, db)
     projet = await db.get(Project, task.project_id)
     fichiers = await collect_project_files(db, projet)
-    miens = [f for f in fichiers.code if f.task_id == task.id]
+    # La version de CETTE tâche, même si une tâche plus récente a réécrit ses
+    # fichiers depuis (sinon une ancienne tâche n'avait plus rien à montrer)
+    taches_code = [t for t in (await db.execute(select(Task).where(
+        Task.project_id == task.project_id, Task.task_type == TaskType.CODE_GENERATION,
+        Task.status != TaskStatus.CANCELLED))).unique().scalars().all()]
+    a_moi = fichiers_de_la_tache(task, build_file_plan(taches_code or [task]))
+    ordre = list((task.task_metadata or {}).get('artifact_files') or [])
+    miens = sorted((ProducedFile(p, c, task.id, task.title, "code") for p, c in a_moi.items()),
+                   key=lambda f: ordre.index(f.path) if f.path in ordre else len(ordre))
+    autres = [f for f in fichiers.code if f.path not in a_moi]
     pages = [f.path for f in miens if f.path.lower().endswith(('.html', '.htm'))
              and detect_language(f.content) in ('html', None)]
     entry = pages[0] if pages else (entry_page(fichiers) if miens else None)
-    ordre = list((task.task_metadata or {}).get('artifact_files') or [])
-    miens.sort(key=lambda f: ordre.index(f.path) if f.path in ordre else len(ordre))
-    autres = [f for f in fichiers.code if f.task_id != task.id]
     return {
         "entry": entry,
         "files": [{"path": f.path, "content": f.content, "language": detect_language(f.content),

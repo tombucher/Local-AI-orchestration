@@ -150,6 +150,15 @@ def infer_artifact_path(task: Task) -> Optional[str]:
     return None
 
 
+# Une tâche qui CRÉE une partie nouvelle (« Développement de la première
+# expérience 3D ») n'est pas une tâche transverse : sans fichier à elle, elle
+# réécrivait app.js en entier et effaçait le travail de la précédente
+_CREATION = re.compile(
+    r'^\s*(d[ée]velopp|cr[ée]ation|cr[ée]er|r[ée]alis|impl[ée]ment|programm|cod(?:er|age)|ajout|construction)',
+    re.IGNORECASE)
+_WEB = ('.html', '.htm', '.css', '.js', '.mjs')
+
+
 def build_file_plan(tasks: List[Task]) -> Dict[int, Optional[str]]:
     """Associe à chaque tâche de code son fichier, sans collision.
 
@@ -158,9 +167,13 @@ def build_file_plan(tasks: List[Task]) -> Dict[int, Optional[str]]:
     """
     plan: Dict[int, Optional[str]] = {}
     used: Dict[str, int] = {}
+    deduits = {t.id: infer_artifact_path(t) for t in tasks}
+    projet_web = any(p and p.lower().endswith(_WEB) for p in deduits.values())
 
     for task in sorted(tasks, key=lambda t: t.id):
-        path = infer_artifact_path(task)
+        path = deduits[task.id]
+        if not path and projet_web and _CREATION.match(task.title or ''):
+            path = f"{file_slug(task.title, 40)}.js"
         if not path:
             plan[task.id] = None
             continue

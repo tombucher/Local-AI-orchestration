@@ -13,7 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Bug, ClipboardCopy, Download, Eye, EyeOff, FileCode2, FileText, Package, RefreshCw, Rss } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../services/api';
-import { assemblerApercu, MARQUE_SONDE, type MessageConsole } from '../../utils/apercu';
+import { assemblerApercu, MARQUE_SONDE, preparerApercu, type MessageConsole } from '../../utils/apercu';
 
 interface CodeFile {
   path: string;
@@ -93,9 +93,11 @@ export const ProjectOutputs = ({ projectId, afficherSiVide = false }: Props) => 
     charger();
   }, [charger]);
 
+  // Page d'entrée, ou page de secours quand le projet n'a pas de HTML
+  const pageApercu = useMemo(() => (data ? preparerApercu(data.entry, data.code) : null), [data]);
   const srcDoc = useMemo(
-    () => (data?.entry && apercu ? assemblerApercu(data.entry, data.code) : ''),
-    [data, apercu],
+    () => (pageApercu && apercu ? assemblerApercu(pageApercu.entry, pageApercu.files) : ''),
+    [pageApercu, apercu],
   );
 
   // Console de l'aperçu : remise à zéro à chaque nouvel aperçu
@@ -200,7 +202,7 @@ export const ProjectOutputs = ({ projectId, afficherSiVide = false }: Props) => 
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
-          {data.entry && (
+          {pageApercu && (
             <button
               onClick={() => setApercu((v) => !v)}
               className="inline-flex items-center gap-2 px-4 py-2 border border-ink-line text-ink hover:border-accent hover:text-accent transition-colors text-sm font-medium"
@@ -248,10 +250,10 @@ export const ProjectOutputs = ({ projectId, afficherSiVide = false }: Props) => 
         </div>
       )}
 
-      {apercu && data.entry && (
+      {apercu && pageApercu && (
         <div className="border border-ink-line mb-4">
           <div className="px-3 py-1.5 border-b border-ink-line bg-paper-warm text-xs text-ink-faint">
-            {data.entry} — aperçu isolé : le site n'a accès ni à l'orchestrateur ni à tes données
+            {pageApercu.secours ? "Pas de page HTML dans le projet : page minimale qui charge ses styles et scripts" : `${pageApercu.entry} — aperçu isolé : le site n'a accès ni à l'orchestrateur ni à tes données`}
           </div>
           {/* allow-scripts sans allow-same-origin : le code généré reste dans sa boîte */}
           <iframe
@@ -318,7 +320,7 @@ export const ProjectOutputs = ({ projectId, afficherSiVide = false }: Props) => 
             <p className="text-xs uppercase tracking-wider text-ink-faint mb-1">Console de l'aperçu</p>
             {!apercu ? (
               <p className="text-sm text-ink-faint">
-                {data.entry ? "Ouvre l'aperçu du site pour capter ses messages et ses erreurs." : "Pas d'aperçu pour ce projet."}
+                {pageApercu ? "Ouvre l'aperçu du site pour capter ses messages et ses erreurs." : "Pas d'aperçu pour ce projet."}
               </p>
             ) : consoleApercu.length === 0 ? (
               <p className="text-sm text-ink-faint">Aucun message : le site n'a signalé aucune erreur.</p>

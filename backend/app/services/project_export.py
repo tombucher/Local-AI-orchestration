@@ -81,6 +81,24 @@ def _veille_markdown(task: Task, results: List[VeilleResult]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def fichiers_de_la_tache(task: Task, plan: Dict[int, Optional[str]]) -> Dict[str, str]:
+    """Les fichiers tels que cette tâche les a écrits (avant qu'une autre ne les remplace).
+
+    Plusieurs fichiers (page en HTML + CSS + JS, ou retouches d'une tâche
+    transverse) : chacun sous son chemin. Sinon le fichier du plan, renommé si
+    le contenu en contredit l'extension.
+    """
+    code = (task.generated_code or "").strip()
+    if not code:
+        return {}
+    plusieurs = split_multi_file(code)
+    if plusieurs:
+        return plusieurs
+    prevu = safe_path((task.task_metadata or {}).get("artifact_path") or plan.get(task.id))
+    path = safe_path(effective_path(prevu, code, file_slug(task.title)))
+    return {path: code + "\n"} if path else {}
+
+
 async def collect_project_files(db: AsyncSession, project: Project) -> ProjectFiles:
     tasks = (await db.execute(
         select(Task).where(Task.project_id == project.id,
@@ -95,22 +113,13 @@ async def collect_project_files(db: AsyncSession, project: Project) -> ProjectFi
     by_path: Dict[str, ProducedFile] = {}
     renommes: List[str] = []
     for task in code_tasks:
-        code = (task.generated_code or "").strip()
-        if not code:
-            continue
         prevu = safe_path((task.task_metadata or {}).get("artifact_path") or plan.get(task.id))
-        # Plusieurs fichiers (page en HTML + CSS + JS, ou retouches d'une tâche
-        # transverse) : chacun sous son chemin
-        plusieurs = split_multi_file(code)
-        path = None if plusieurs else safe_path(effective_path(prevu, code, file_slug(task.title)))
-        if path:
-            if path != prevu:
+        for path, body in fichiers_de_la_tache(task, plan).items():
+            if prevu and path != prevu and len(split_multi_file(task.generated_code)) == 0:
                 renommes.append(f"« {task.title} » contient du {_langage(path)}, pas du {_langage(prevu)} : "
                                 f"rangé sous `{path}` au lieu de `{prevu}`.")
-            by_path[path] = ProducedFile(path, code + "\n", task.id, task.title, "code")
-        else:
-            for sub_path, body in plusieurs.items():
-                by_path[sub_path] = ProducedFile(sub_path, body, task.id, task.title, "code")
+            # Une tâche plus récente qui réécrit le même chemin le remplace
+            by_path[path] = ProducedFile(path, body, task.id, task.title, "code")
     files.code = sorted(by_path.values(), key=lambda f: f.path)
 
     # --- Textes et veilles, numérotés dans l'ordre du projet

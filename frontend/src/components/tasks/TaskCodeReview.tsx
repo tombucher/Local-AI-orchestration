@@ -12,7 +12,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Eye, Maximize2, Minimize2, RefreshCw } from 'lucide-react';
 import type { Task } from '../../types/task.types';
 import api from '../../services/api';
-import { assemblerApercu, MARQUE_SONDE, type MessageConsole } from '../../utils/apercu';
+import { assemblerApercu, MARQUE_SONDE, preparerApercu, type MessageConsole } from '../../utils/apercu';
 import { CodeViewer } from './CodeViewer';
 
 interface FichierTache {
@@ -61,13 +61,24 @@ export const TaskCodeReview = ({ task }: { task: Task }) => {
       .then((r) => {
         if (!actif) return;
         setData(r.data);
-        setOnglet(r.data.entry ? 'apercu' : (r.data.files.find((f) => f.mine)?.path ?? 'apercu'));
+        setOnglet('apercu');
       })
       .catch(() => actif && setData({ entry: null, files: [] }));
     return () => { actif = false; };
   }, [task.id, task.generated_code]);
 
-  const srcDoc = useMemo(() => (data?.entry ? assemblerApercu(data.entry, data.files) : ''), [data]);
+  // Page de la tâche, du projet, ou page minimale si le projet n'en a pas.
+  // La page du projet peut être celle d'une autre tâche, cassée : on peut
+  // alors voir le code de cette tâche sur une page minimale
+  const [pageMinimale, setPageMinimale] = useState(false);
+  const apercu = useMemo(() => {
+    if (!data) return null;
+    if (pageMinimale) {
+      return preparerApercu(null, data.files.filter((f) => !/\.html?$/i.test(f.path)));
+    }
+    return preparerApercu(data.entry, data.files);
+  }, [data, pageMinimale]);
+  const srcDoc = useMemo(() => (apercu ? assemblerApercu(apercu.entry, apercu.files) : ''), [apercu]);
 
   useEffect(() => { setConsoleApercu([]); }, [srcDoc, rechargement]);
 
@@ -100,7 +111,8 @@ export const TaskCodeReview = ({ task }: { task: Task }) => {
   }
 
   const fichier = miens.find((f) => f.path === onglet);
-  const pageDuProjet = data.entry && !miens.some((f) => f.path === data.entry);
+  const pageDuProjet = apercu && !apercu.secours && !miens.some((f) => f.path === apercu.entry);
+  const choixDePage = pageMinimale || pageDuProjet;
   const erreurs = consoleApercu.filter((m) => m.niveau === 'error');
 
   const ongletClasse = (actif: boolean) =>
@@ -117,7 +129,7 @@ export const TaskCodeReview = ({ task }: { task: Task }) => {
         </p>
       )}
       <div className="flex flex-wrap items-end gap-1 border-b border-ink-line mb-3">
-        {data.entry && (
+        {apercu && (
           <button onClick={() => setOnglet('apercu')} className={`${ongletClasse(onglet === 'apercu')} inline-flex items-center gap-1.5`}>
             <Eye className="w-3.5 h-3.5" /> Aperçu
           </button>
@@ -130,15 +142,22 @@ export const TaskCodeReview = ({ task }: { task: Task }) => {
         ))}
       </div>
 
-      {onglet === 'apercu' && data.entry ? (
+      {onglet === 'apercu' && apercu ? (
         <div className={pleinEcran ? 'fixed inset-0 z-50 bg-paper p-4 flex flex-col' : 'border border-ink-line'}>
           <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-ink-line bg-paper-warm text-xs text-ink-faint">
             <span className="truncate">
-              {pageDuProjet
-                ? `${data.entry}, la page du projet, avec le code de cette tâche`
-                : `${data.entry} — aperçu isolé : le code n'a accès ni à l'orchestrateur ni à tes données`}
+              {apercu.secours
+                ? 'Le projet n\'a pas de page HTML : page minimale qui charge ses styles et scripts'
+                : pageDuProjet
+                  ? `${apercu.entry}, la page du projet, avec le code de cette tâche`
+                  : `${apercu.entry} — aperçu isolé : le code n'a accès ni à l'orchestrateur ni à tes données`}
             </span>
             <span className="flex shrink-0 items-center gap-3">
+              {choixDePage && (
+                <button onClick={() => setPageMinimale((v) => !v)} className="hover:text-accent">
+                  {pageMinimale ? 'Page du projet' : 'Page minimale'}
+                </button>
+              )}
               <button onClick={() => setRechargement((n) => n + 1)} className="inline-flex items-center gap-1 hover:text-accent">
                 <RefreshCw className="w-3.5 h-3.5" /> Relancer
               </button>
@@ -151,7 +170,7 @@ export const TaskCodeReview = ({ task }: { task: Task }) => {
           <iframe
             key={rechargement}
             ref={cadre}
-            title={`Aperçu de ${data.entry}`}
+            title={`Aperçu de ${apercu.entry}`}
             sandbox="allow-scripts allow-forms allow-modals allow-downloads"
             srcDoc={srcDoc}
             className={pleinEcran ? 'w-full flex-1 bg-white border border-ink-line' : 'w-full h-[60vh] bg-white'}
@@ -170,7 +189,7 @@ export const TaskCodeReview = ({ task }: { task: Task }) => {
         </>
       ) : null}
 
-      {!data.entry && (
+      {!apercu && (
         <p className="mt-2 text-xs text-ink-faint">Pas d'aperçu : ce code n'est pas une page web.</p>
       )}
     </div>

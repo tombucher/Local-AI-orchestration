@@ -383,6 +383,13 @@ class UnifiedOrchestrator:
         )
         code = retirer_preambule(code, workspace.own_path)
         task.generated_code = code
+        # Sortie coupée par la limite de longueur : dit à l'écran de validation
+        metadata = dict(task.task_metadata or {})
+        if getattr(self.llm_client, 'derniere_sortie_tronquee', False):
+            metadata['fichiers_tronques'] = list(split_multi_file(code)) or [workspace.own_path or 'le résultat']
+        else:
+            metadata.pop('fichiers_tronques', None)
+        task.task_metadata = metadata
 
         # Figer le fichier attribué par le plan : les tâches suivantes s'y réfèrent
         if workspace.own_path:

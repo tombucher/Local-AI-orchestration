@@ -80,6 +80,14 @@ export const ProjectTasksBoard = ({ projectId, tasks, loading, criticalPathMap, 
     (t) => !TERMINEES.has(t.status as string) && bloquantes(t).length === 0,
   );
 
+  // « Critique » = sans marge : un retard ici décale la fin du projet. Quand
+  // les tâches s'enchaînent toutes, ou qu'aucune n'a de durée estimée, aucune
+  // n'a de marge et toutes étaient marquées critiques : l'étiquette ne
+  // distinguait rien. Elle n'apparaît que si elle distingue certaines tâches.
+  const ouvertes = tasks.filter((t) => !TERMINEES.has(t.status as string));
+  const nbCritiques = ouvertes.filter((t) => criticalPathMap.get(t.id)?.is_critical).length;
+  const critiqueParlant = nbCritiques > 0 && nbCritiques < ouvertes.length;
+
   const toggle = (taskId: number, e: React.MouseEvent) => {
     e.stopPropagation();
     setExpanded((prev) => {
@@ -124,10 +132,10 @@ export const ProjectTasksBoard = ({ projectId, tasks, loading, criticalPathMap, 
           {ordered.map((task, position) => {
             const { description, subtasks } = extractSubtasks(task.description || '');
             const cp = criticalPathMap.get(task.id);
-            const isCritical = cp?.is_critical ?? false;
             const attente = bloquantes(task);
             const estProchaine = prochaine?.id === task.id;
             const terminee = TERMINEES.has(task.status as string);
+            const isCritical = critiqueParlant && !terminee && (cp?.is_critical ?? false);
 
             return (
               <div
@@ -164,7 +172,10 @@ export const ProjectTasksBoard = ({ projectId, tasks, loading, criticalPathMap, 
                     </span>
                   )}
                   {isCritical && (
-                    <span className="flex items-center gap-1 kicker text-accent">
+                    <span
+                      className="flex items-center gap-1 kicker text-accent"
+                      title="Sans marge : un retard sur cette tâche retarde la fin du projet"
+                    >
                       <Flame className="w-3 h-3" />
                       Critique
                     </span>

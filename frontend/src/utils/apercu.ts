@@ -51,12 +51,14 @@ export const assemblerApercu = (entry: string, files: FichierApercu[]): string =
       html = html.replace(
         new RegExp(`<script\\b([^>]*)src=["']${ref}["']([^>]*)>\\s*</script>`, 'gi'),
         (_m, avant: string, apres: string) => {
+          // Un module (import … from) doit le rester une fois en ligne
+          const ouvrante = /type=["']module["']/i.test(avant + apres) ? '<script type="module">' : '<script>';
           // Un script différé attend le DOM : en ligne, il doit passer en fin de page
           if (/\b(defer|type=["']module["'])/i.test(avant + apres)) {
-            scriptsDiffere.push(`<script>/* ${chemin} */\n${sur}</script>`);
+            scriptsDiffere.push(`${ouvrante}/* ${chemin} */\n${sur}</script>`);
             return '';
           }
-          return `<script>/* ${chemin} */\n${sur}</script>`;
+          return `${ouvrante}/* ${chemin} */\n${sur}</script>`;
         },
       );
     }
@@ -68,4 +70,111 @@ export const assemblerApercu = (entry: string, files: FichierApercu[]): string =
   }
   // La sonde passe avant tout script du site, pour capter ses premières erreurs
   return /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (m) => `${m}\n${SONDE}`) : `${SONDE}\n${html}`;
+};
+
+// ------------------------------------------------- projet sans page HTML --
+
+const PAGE_SECOURS = '__apercu__.html';
+const IMPORT_NU = /(?:^|[\s;])(?:import\s+(?:[\w*{}\s,]+\s+from\s+)?|import\s*\(\s*|export\s+[\w*{}\s,]+\s+from\s+)["']([^"'./][^"']*)["']/g;
+
+/** Nom de paquet d'un import nu : « three/addons/x.js » → « three », « @a/b/c » → « @a/b » */
+const paquetDe = (specifier: string) => {
+  const morceaux = specifier.split('/');
+  return specifier.startsWith('@') ? morceaux.slice(0, 2).join('/') : morceaux[0];
+};
+
+/**
+ * Carte d'imports pour les `import … from 'three'` : sans Node ni Vite, le
+ * navigateur ne sait pas où trouver « three ». Les versions viennent du
+ * package.json du projet s'il y en a un, les modules d'esm.sh.
+ */
+const carteImports = (files: FichierApercu[]): string | null => {
+  const versions: Record<string, string> = {};
+  const paquet = files.find((f) => f.path.endsWith('package.json'));
+  if (paquet) {
+    try {
+      const deps = JSON.parse(paquet.content).dependencies ?? {};
+      for (const [nom, version] of Object.entries(deps)) versions[nom] = String(version).replace(/^[\^~>=<\s]+/, '');
+    } catch {
+      // package.json illisible : versions les plus récentes
+    }
+  }
+  const paquets = new Set<string>();
+  for (const f of files) {
+    if (!/\.(m?js|jsx)$/.test(f.path)) continue;
+    for (const m of f.content.matchAll(IMPORT_NU)) {
+      if (!/^(https?:|data:|blob:)/.test(m[1])) paquets.add(paquetDe(m[1]));
+    }
+  }
+  if (paquets.size === 0) return null;
+  const imports: Record<string, string> = {};
+  for (const nom of paquets) {
+    const url = `https://esm.sh/${nom}${versions[nom] ? `@${versions[nom]}` : ''}`;
+    imports[nom] = url;
+    imports[`${nom}/`] = `${url}/`;
+  }
+  return `<script type="importmap">${JSON.stringify({ imports })}</script>`;
+};
+
+const estModule = (code: string) => /^\s*(import|export)\s/m.test(code);
+
+const ID_CHERCHE = /(?:getElementById\(\s*|querySelector(?:All)?\(\s*)["'`]#?([A-Za-z][\w-]*)["'`]/g;
+
+/**
+ * Les éléments qu'un script va chercher par leur id (`#scene`, `#perf-indicator`) :
+ * sans page HTML, personne ne les fournit et le script s'arrête aussitôt.
+ * Une toile pour ce qui ressemble à une scène de dessin, un bloc sinon.
+ */
+const elementsAttendus = (scripts: FichierApercu[]): string => {
+  const ids = new Set<string>();
+  for (const f of scripts) {
+    for (const m of f.content.matchAll(ID_CHERCHE)) {
+      // querySelector('.classe') ou 'div' : seuls les « #id » et getElementById comptent
+      if (m[0].includes('querySelector') && !m[0].includes('#')) continue;
+      ids.add(m[1]);
+    }
+  }
+  return [...ids]
+    .map((id) => (/canvas|scene|toile|webgl|gl$|stage/i.test(id) ? `<canvas id="${id}"></canvas>` : `<div id="${id}"></div>`))
+    .join('\n');
+};
+
+/**
+ * Ce qu'il faut assembler pour voir tourner le code. Sans page HTML (projet
+ * planifié comme un projet Node/Vite : package.json, styles.css, app.js),
+ * il n'y avait rien à ouvrir et le code se validait à l'aveugle : on fabrique
+ * une page minimale qui charge les styles et les scripts.
+ */
+export const preparerApercu = (
+  entry: string | null,
+  files: FichierApercu[],
+): { entry: string; files: FichierApercu[]; secours: boolean } | null => {
+  const carte = carteImports(files);
+  if (entry) {
+    const page = files.find((f) => f.path === entry);
+    if (!page || !carte || /type=["']importmap["']/i.test(page.content)) return { entry, files, secours: false };
+    // Page existante, imports nus : la carte passe en tête, avant tout script
+    const avecCarte = /<head[^>]*>/i.test(page.content)
+      ? page.content.replace(/<head[^>]*>/i, (m) => `${m}\n${carte}`)
+      : `${carte}\n${page.content}`;
+    return { entry, files: files.map((f) => (f === page ? { ...f, content: avecCarte } : f)), secours: false };
+  }
+  const styles = files.filter((f) => /\.css$/.test(f.path));
+  const scripts = files.filter((f) => /\.(m?js)$/.test(f.path));
+  if (scripts.length === 0 && styles.length === 0) return null;
+  const page = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aperçu</title>
+${carte ?? ''}
+${styles.map((f) => `<link rel="stylesheet" href="${f.path}">`).join('\n')}
+</head>
+<body>
+${elementsAttendus(scripts)}
+${scripts.map((f) => `<script ${estModule(f.content) ? 'type="module"' : 'defer'} src="${f.path}"></script>`).join('\n')}
+</body>
+</html>`;
+  return { entry: PAGE_SECOURS, files: [...files, { path: PAGE_SECOURS, content: page }], secours: true };
 };

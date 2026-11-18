@@ -255,7 +255,9 @@ RÈGLES:
 - task_type: UNIQUEMENT les 8 valeurs listées, n'invente PAS de nouveaux types
 - Nombre de tâches adapté à la complexité (3 mini projet, 15-30 gros projet)
 - 3-5 sous-tâches concrètes par tâche
-- Couvre TOUS les aspects: design, dev, test, doc, déploiement
+- Couvre les aspects que l'outil peut produire : conception, code, documents, recherche
+- Code web : le résultat s'ouvre directement dans un navigateur, sans installation. Pas de package.json, npm, Vite, React ni étape de build ; bibliothèques (three.js, p5.js, GSAP…) via CDN. Pour un site ou une application, la PREMIÈRE tâche de code produit `index.html`. Chaque tâche de code nomme SON fichier dans son llm_prompt (`index.html`, `styles.css`, `experience-1.js`…) ; deux tâches n'écrivent jamais le même fichier, sauf une tâche finale « Intégration » qui les relie.
+- Pas de tâche de code pour tester sur des appareils, déployer ou mettre en ligne : l'outil ne peut pas le faire. Si c'est utile, une tâche administrative (checklist).
 - dependency_titles: TITRES EXACTS des autres tâches, graphe acyclique, pas d'auto-référence
 - Veilles: 1-3 max, uniquement si pertinentes, keywords très spécifiques
 - llm_prompt: obligatoire pour code_generation et document_writing : décris le LIVRABLE (contenu, format, données concrètes), pas un rôle. Tout ce qui se regarde (affiche, visuel, maquette, prototype) = page web (HTML, CSS et JS, fichiers séparés), jamais Python/Pillow : le résultat est affiché dans un navigateur, pas exécuté.
@@ -352,7 +354,9 @@ RÈGLES STRICTES:
 - task_type: UNIQUEMENT les 8 valeurs listées (choisis le PLUS ADAPTÉ à la nature de la tâche!)
 - Nombre de tâches: adapté à la complexité (2-3 pour mini projet, 15-30+ pour gros projet)
 - Sous-tâches: 3-5 actions concrètes par tâche (pas juste 2!)
-- Sois EXHAUSTIF: couvre TOUS les aspects (design, dev, test, doc, déploiement, etc.)
+- Sois EXHAUSTIF sur ce que l'outil peut produire : conception, code, documents, recherche
+- Code web : le résultat s'ouvre directement dans un navigateur, sans installation. Pas de package.json, npm, Vite, React ni étape de build ; bibliothèques (three.js, p5.js, GSAP…) via CDN. Pour un site ou une application, la PREMIÈRE tâche de code produit `index.html`. Chaque tâche de code nomme SON fichier dans son llm_prompt (`index.html`, `styles.css`, `experience-1.js`…) ; deux tâches n'écrivent jamais le même fichier, sauf une tâche finale « Intégration » qui les relie.
+- Pas de tâche de code pour tester sur des appareils, déployer ou mettre en ligne : l'outil ne peut pas le faire. Si c'est utile, une tâche administrative (checklist).
 - Sois PRÉCIS: chaque tâche doit être claire et actionnable
 
 RÈGLES POUR llm_prompt (code_generation et document_writing):
